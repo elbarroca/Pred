@@ -17,11 +17,11 @@ pydantic-settings==2.11.0     # Settings management with environment variables
 # -----------------------------------------------------------------------------
 langchain==0.3.12             # Core LangChain framework for agent orchestration
 langchain-core==0.3.63        # Core abstractions and base classes (compatible with valyu)
-langchain-community==0.3.12   # Community integrations
+langchain-community==0.3.12   # Community integrations (required for some tools)
 langchain-anthropic==0.2.4    # Anthropic Claude integration
 langchain-openai==0.2.5       # OpenAI integration (optional backup)
 langgraph==0.2.45             # Graph-based agent workflow orchestration
-# langchain-valyu             # Valyu integration for LangChain (tools not available in current version)
+langchain-valyu>=0.1.0        # Valyu deep research integration for comprehensive web search
 
 # -----------------------------------------------------------------------------
 # Async & HTTP Client Libraries

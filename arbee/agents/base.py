@@ -13,7 +13,6 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain_core.output_parsers import JsonOutputParser, PydanticOutputParser
 from langchain_core.runnables import RunnablePassthrough
-
 from config.settings import Settings
 
 # Setup logging
@@ -40,21 +39,10 @@ class BaseAgent(ABC):
     def __init__(
         self,
         settings: Optional[Settings] = None,
-        model_name: str = "claude-3-5-sonnet-20241022",
+        model_name: str = "gpt-4o-mini",
         temperature: float = 0.1,
         max_tokens: int = 4096,
-        max_retries: int = 3
-    ):
-        """
-        Initialize base agent
-
-        Args:
-            settings: Application settings (API keys, etc.)
-            model_name: Claude model to use
-            temperature: LLM temperature (0.0-1.0)
-            max_tokens: Maximum tokens in response
-            max_retries: Retry attempts on failure
-        """
+        max_retries: int = 3) -> None:
         self.settings = settings or Settings()
         self.model_name = model_name
         self.temperature = temperature
@@ -123,8 +111,22 @@ class BaseAgent(ABC):
         # Simple instruction without schema to avoid template variable issues
         system_msg += "\n\nYou must respond with valid JSON. The response will be validated against the required schema."
 
-        # Create a simple template that just passes the input through
-        template_str = system_msg + "\n\nHuman: {input}\n\nAssistant:"
+        # Create template with human prompt if available
+        human_prompt = ""
+        template_vars = ["input"]  # Default variable name
+
+        if hasattr(self, 'get_human_prompt'):
+            human_prompt = self.get_human_prompt()
+            # Extract template variables from the human prompt
+            import re
+            vars_in_prompt = re.findall(r'\{([^}]+)\}', human_prompt)
+            if vars_in_prompt:
+                template_vars = vars_in_prompt
+
+        if human_prompt:
+            template_str = system_msg + "\n\n" + human_prompt + "\n\nAssistant:"
+        else:
+            template_str = system_msg + "\n\nHuman: {input}\n\nAssistant:"
 
         messages = [
             SystemMessagePromptTemplate.from_template(template_str)
@@ -183,7 +185,7 @@ class BaseAgent(ABC):
 
                 # Execute chain
                 start_time = datetime.now()
-                result = await chain.ainvoke({"input": json.dumps(input_data, default=str)})
+                result = await chain.ainvoke(input_data)
                 duration = (datetime.now() - start_time).total_seconds()
 
                 # Success

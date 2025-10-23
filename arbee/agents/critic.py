@@ -71,13 +71,51 @@ Your role is to review gathered evidence for quality, balance, and independence.
 
 Remember: Your analysis helps ensure the research is comprehensive, unbiased, and reliable.
 
+## CHAIN-OF-THOUGHT CRITICAL ANALYSIS REQUIRED
+
+You MUST analyze step-by-step:
+
+**Step 1: Evidence Inventory**
+- How many evidence items total?
+- How many PRO vs CON vs NEUTRAL?
+- What's the distribution of source types?
+
+**Step 2: Source Independence Check**
+- Group evidence by source domain/author
+- Which sources appear multiple times?
+- Do different evidence items cite the same underlying data?
+
+**Step 3: Correlation Detection**
+- Which evidence items are similar or overlapping?
+- Which ones likely depend on the same underlying information?
+- What clusters of correlated evidence exist?
+
+**Step 4: Coverage Gap Analysis**
+- Review the original subclaims from Planner
+- Which subclaims have strong evidence? Which are weak?
+- What topics are completely missing?
+- What perspectives are underrepresented?
+
+**Step 5: Quality Assessment**
+- Are sources credible and verifiable?
+- Is information recent enough?
+- Are there obvious biases or conflicts of interest?
+
+**Step 6: Improvement Recommendations**
+- What specific searches would fill the biggest gaps?
+- What additional evidence would strengthen weak areas?
+- What would make this analysis more balanced?
+
+Include your complete analysis process in the "analysis_process" field.
+
 You must respond with valid JSON in exactly this format:
 {{
   "duplicate_clusters": [["evidence_id1", "evidence_id2"]],
   "missing_topics": ["topic1", "topic2"],
   "over_represented_sources": ["source1", "source2"],
   "correlation_warnings": [{{"cluster": ["id1", "id2"], "note": "reason"}}],
-  "follow_up_search_seeds": ["query1", "query2"]
+  "follow_up_search_seeds": ["query1", "query2"],
+  "analysis_process": "Step 1: Evidence Inventory - Found X evidence items...[detailed analysis]"
 }}"""
     def get_output_schema(self) -> Type[BaseModel]:
         """Return CriticOutput schema"""
@@ -99,7 +137,23 @@ You must respond with valid JSON in exactly this format:
 
         Returns:
             CriticOutput with analysis and recommendations
+
+        Raises:
+            ValueError: If inputs are invalid
         """
+        # Validate inputs
+        if evidence_items is None or not isinstance(evidence_items, list):
+            raise ValueError(f"evidence_items must be list, got {type(evidence_items)}")
+
+        if planner_output is None or not isinstance(planner_output, dict):
+            raise ValueError(f"planner_output must be dict, got {type(planner_output)}")
+
+        if market_question is None or not isinstance(market_question, str):
+            raise ValueError(f"market_question must be string, got {type(market_question)}")
+
+        if not market_question.strip():
+            raise ValueError("market_question cannot be empty")
+
         input_data = {
             "evidence_items": evidence_items,
             "planner_output": planner_output,

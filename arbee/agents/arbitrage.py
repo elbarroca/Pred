@@ -10,6 +10,7 @@ from arbee.api_clients.polymarket import PolymarketClient
 from arbee.api_clients.kalshi import KalshiClient
 from config.settings import settings
 from pydantic import BaseModel
+import asyncio
 
 
 class ArbitrageOpportunityList(BaseModel):
@@ -493,3 +494,81 @@ ALWAYS END EVERY OUTPUT WITH: "NOT FINANCIAL ADVICE. This is research only."
         )
 
         return rationale
+
+    async def scan_markets_for_arbitrage(
+        self,
+        markets: List[Dict[str, Any]],
+        providers: List[str] = ["polymarket", "kalshi"],
+        min_profit_threshold: float = 0.005,
+        bankroll: float = None,
+        max_kelly: float = None,
+        parallel_limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        OPTIMIZED: Scan multiple markets for cross-platform arbitrage in parallel
+
+        This is the fast arbitrage scanner that doesn't require Bayesian analysis.
+        It only checks for guaranteed profit opportunities from price differences.
+
+        Args:
+            markets: List of market dicts (with slug/id and question)
+            providers: Platforms to check
+            min_profit_threshold: Minimum profit to report (0.005 = 0.5%)
+            bankroll: Available capital
+            max_kelly: Max position size
+            parallel_limit: Max concurrent requests
+
+        Returns:
+            List of dicts with {market, opportunities}
+        """
+        bankroll = bankroll or settings.DEFAULT_BANKROLL
+        max_kelly = max_kelly or settings.MAX_KELLY_FRACTION
+
+        self.logger.info(f"Scanning {len(markets)} markets with parallelism={parallel_limit}")
+
+        # Create semaphore to limit concurrency
+        semaphore = asyncio.Semaphore(parallel_limit)
+
+        async def check_market(market: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            """Check single market with rate limiting"""
+            async with semaphore:
+                try:
+                    market_slug = market.get('slug', market.get('ticker', market.get('id')))
+                    question = market.get('question', market.get('title', ''))
+
+                    # Check for cross-platform arbitrage
+                    opportunities = await self.detect_cross_platform_arbitrage(
+                        market_slug=market_slug,
+                        market_question=question,
+                        providers=providers,
+                        bankroll=bankroll,
+                        max_kelly=max_kelly
+                    )
+
+                    # Filter by minimum profit
+                    profitable = [
+                        opp for opp in opportunities
+                        if (opp.guaranteed_profit or 0) >= min_profit_threshold
+                    ]
+
+                    if profitable:
+                        return {
+                            'market': market,
+                            'opportunities': profitable
+                        }
+
+                except Exception as e:
+                    self.logger.warning(f"Error checking market {market.get('slug', '?')}: {e}")
+                    return None
+
+        # Process all markets in parallel (with concurrency limit)
+        results = await asyncio.gather(*[check_market(m) for m in markets])
+
+        # Filter out None results
+        found_opportunities = [r for r in results if r is not None]
+
+        self.logger.info(
+            f"Scan complete: Found arbitrage in {len(found_opportunities)}/{len(markets)} markets"
+        )
+
+        return found_opportunities

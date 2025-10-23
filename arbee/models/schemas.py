@@ -35,6 +35,7 @@ class PlannerOutput(BaseModel):
     key_variables: List[str] = Field(..., description="Critical factors affecting outcome")
     search_seeds: SearchSeeds
     decision_criteria: List[str] = Field(..., description="What would resolve the question")
+    reasoning_trace: str = Field(..., description="Step-by-step chain-of-thought reasoning process")
 
 
 # ============================================================================
@@ -74,6 +75,7 @@ class ResearcherOutput(BaseModel):
     total_pro_count: int = Field(default=0)
     total_con_count: int = Field(default=0)
     research_timestamp: datetime = Field(default_factory=datetime.utcnow)
+    search_strategy: str = Field(default="", description="Explanation of research approach taken")
 
 
 # ============================================================================
@@ -105,6 +107,7 @@ class CriticOutput(BaseModel):
         default_factory=list,
         description="Additional queries to fill gaps"
     )
+    analysis_process: str = Field(..., description="Step-by-step analysis of how evidence was critiqued")
 
 
 # ============================================================================
@@ -141,6 +144,7 @@ class AnalystOutput(BaseModel):
     p_bayesian: float = Field(..., ge=0.0, le=1.0, description="Final probability estimate")
     p_neutral: float = Field(..., ge=0.0, le=1.0, description="Uncertainty-adjusted estimate")
     sensitivity_analysis: List[SensitivityScenario] = Field(default_factory=list)
+    calculation_steps: List[str] = Field(..., description="Step-by-step mathematical reasoning trace")
 
     @field_validator('p_bayesian', 'p_neutral')
     @classmethod

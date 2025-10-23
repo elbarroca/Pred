@@ -7,8 +7,6 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-# Configure logging for this module
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 from arbee.agents.base import BaseAgent
 from arbee.models.schemas import ResearcherOutput, Evidence
 from arbee.api_clients.valyu import ValyuResearchClient
@@ -186,6 +184,43 @@ Quality over quantity: 10 high-quality sources > 100 weak ones.
         """Return ResearcherOutput schema"""
         return ResearcherOutput
 
+    def get_human_prompt(self) -> str:
+        """Human prompt for evidence extraction"""
+        return """Analyze the provided search results and extract structured evidence items.
+
+Search Results: {search_results}
+Direction: {direction}
+Max Items: {max_items}
+
+Extract up to {max_items} high-quality evidence items that are relevant to the market question. Each evidence item should be a specific, falsifiable claim with proper attribution.
+
+Return your response as a valid JSON object with this exact structure:
+{{
+    "evidence_items": [
+        {{
+            "subclaim_id": "string (use 'general' if no specific subclaim matches)",
+            "title": "Brief descriptive title",
+            "url": "Source URL",
+            "published_date": "YYYY-MM-DD format",
+            "source_type": "primary|high_quality_secondary|secondary|weak",
+            "claim_summary": "Specific claim extracted from the source",
+            "support": "pro|con|neutral",
+            "verifiability_score": 0.0-1.0,
+            "independence_score": 0.0-1.0,
+            "recency_score": 0.0-1.0,
+            "estimated_LLR": number,
+            "extraction_notes": "Explanation of LLR and scoring"
+        }}
+    ]
+}}
+
+Focus on:
+- Recent, verifiable sources
+- Specific claims (not broad summaries)
+- Proper LLR calibration based on source quality
+- Balanced coverage if multiple perspectives exist
+- Clear attribution with URLs and dates"""
+
     async def research(
         self,
         search_seeds: List[str],
@@ -206,7 +241,36 @@ Quality over quantity: 10 high-quality sources > 100 weak ones.
 
         Returns:
             ResearcherOutput with gathered evidence
+
+        Raises:
+            ValueError: If inputs are invalid
         """
+        # Validate inputs
+        if search_seeds is None or not isinstance(search_seeds, list):
+            raise ValueError(f"search_seeds must be list, got {type(search_seeds)}")
+
+        if not search_seeds:
+            raise ValueError("search_seeds cannot be empty")
+
+        if subclaims is None or not isinstance(subclaims, list):
+            raise ValueError(f"subclaims must be list, got {type(subclaims)}")
+
+        if market_question is None or not isinstance(market_question, str):
+            raise ValueError(f"market_question must be string, got {type(market_question)}")
+
+        if not market_question.strip():
+            raise ValueError("market_question cannot be empty")
+
+        if not isinstance(max_evidence_per_seed, int) or max_evidence_per_seed < 1:
+            raise ValueError(
+                f"max_evidence_per_seed must be positive integer, got {max_evidence_per_seed}"
+            )
+
+        if not isinstance(date_range_days, int) or date_range_days < 1:
+            raise ValueError(
+                f"date_range_days must be positive integer, got {date_range_days}"
+            )
+
         self.logger.info(
             f"Starting {self.direction.upper()} research with {len(search_seeds)} seeds"
         )
@@ -223,7 +287,7 @@ Quality over quantity: 10 high-quality sources > 100 weak ones.
             f"{self.direction.upper()} research complete: {len(evidence_items)} evidence items"
         )
 
-        return ResearcherOutput(evidence=evidence_items)
+        return ResearcherOutput(evidence_items=evidence_items)
 
     async def _execute_searches(
         self,
@@ -291,8 +355,6 @@ Quality over quantity: 10 high-quality sources > 100 weak ones.
 
         # Prepare input for LLM
         input_data = {
-            "market_question": market_question,
-            "subclaims": subclaims,
             "search_results": search_results[:50],  # Limit context size
             "direction": self.direction,
             "max_items": max_items
@@ -301,8 +363,8 @@ Quality over quantity: 10 high-quality sources > 100 weak ones.
         # Invoke LLM to extract evidence
         try:
             result = await self.invoke(input_data)
-            self.logger.info(f"Extracted {len(result.evidence)} evidence items")
-            return result.evidence
+            self.logger.info(f"Extracted {len(result.evidence_items)} evidence items")
+            return result.evidence_items
 
         except Exception as e:
             self.logger.error(f"Evidence extraction failed: {e}")

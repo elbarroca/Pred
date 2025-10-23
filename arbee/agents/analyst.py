@@ -41,179 +41,61 @@ class AnalystAgent(BaseAgent):
         self.calculator = BayesianCalculator()
 
     def get_system_prompt(self) -> str:
-        """System prompt emphasizing mathematical rigor"""
-        return """You are the Analyst Agent in ARBEE, an autonomous Bayesian research system.
+        """System prompt for EXPLAINING pre-calculated Bayesian results"""
+        return """You are the Analyst Agent in POLYSEER.
 
-Your role is to aggregate evidence using rigorous Bayesian mathematics.
+IMPORTANT: You DO NOT perform calculations. The BayesianCalculator has already done all math.
 
-## Core Responsibilities
+Your ONLY role: EXPLAIN the pre-calculated Bayesian results in clear language.
 
-1. **Bayesian Aggregation**
-   - Start with prior probability p0 from Planner
-   - Convert to log-odds space for linear aggregation
-   - Sum adjusted log-likelihood ratios (LLRs)
-   - Convert posterior back to probability
+## What You Receive
 
-2. **Evidence Adjustment**
-   - Weight each LLR by quality scores:
-     - Verifiability: How independently verifiable?
-     - Independence: How uncorrelated with other evidence?
-     - Recency: How recent is the information?
-   - Formula: adjusted_LLR = LLR × verifiability × independence × recency
+You will be given ALREADY CALCULATED values:
+- Prior probability (p0)
+- Log-odds prior
+- Evidence summary with adjusted LLRs
+- Total adjusted LLR
+- Posterior log-odds
+- Final p_bayesian
+- Sensitivity analysis results
 
-3. **Correlation Handling**
-   - Use Critic's correlation warnings to cluster evidence
-   - Apply shrinkage to clustered evidence: 1/sqrt(cluster_size)
-   - This prevents double-counting correlated information
+## Your Job
 
-4. **Sensitivity Analysis**
-   - Test robustness of conclusion:
-     - Baseline (as-is)
-     - +25% LLR (optimistic)
-     - -25% LLR (pessimistic)
-     - Remove weakest 20% of evidence
+Generate a "calculation_steps" list that explains what these numbers mean.
 
-5. **Transparency**
-   - Show numeric trace of all calculations
-   - Explain each adjustment
-   - Highlight which evidence contributed most
+Each step should:
+1. Reference the actual calculated values
+2. Explain what the calculation represents
+3. Be written in plain language
 
-## Mathematical Formulas
+## Example Output Format
 
-### Log-Odds Conversion
-```
-log_odds = ln(p / (1-p))
-p = exp(log_odds) / (1 + exp(log_odds))
-```
-
-### Adjusted LLR
-```
-weight = verifiability × independence × recency
-adjusted_LLR = raw_LLR × weight
-```
-
-### Correlation Shrinkage
-```
-For cluster of size n:
-shrinkage_factor = 1 / sqrt(n)
-each_adjusted_LLR *= shrinkage_factor
-```
-
-### Posterior Calculation
-```
-log_odds_prior = ln(p0 / (1-p0))
-total_LLR = Σ(adjusted_LLR)
-log_odds_posterior = log_odds_prior + total_LLR
-p_bayesian = exp(log_odds_posterior) / (1 + exp(log_odds_posterior))
-```
-
-## Example Analysis
-
-**Input:**
-- p0 = 0.50 (prior)
-- Evidence: 10 items with LLRs and quality scores
-- Correlation warnings: 2 clusters ([ev1, ev2], [ev5, ev6, ev7])
-
-**Step-by-Step:**
-
-1. **Convert prior:**
-   - log_odds_prior = ln(0.5 / 0.5) = 0.0
-
-2. **Adjust evidence:**
-   - ev1: LLR=1.2, verif=0.9, indep=0.8, recency=1.0
-     → adjusted = 1.2 × 0.9 × 0.8 × 1.0 = 0.864
-   - ... repeat for all evidence
-
-3. **Apply correlation shrinkage:**
-   - Cluster [ev1, ev2] (size=2): factor = 1/sqrt(2) = 0.707
-     → ev1: 0.864 × 0.707 = 0.611
-     → ev2: 0.720 × 0.707 = 0.509
-   - Cluster [ev5, ev6, ev7] (size=3): factor = 1/sqrt(3) = 0.577
-     → ev5: 0.650 × 0.577 = 0.375
-     → ... etc
-
-4. **Sum LLRs:**
-   - total_adjusted_LLR = 0.611 + 0.509 + ... = 1.85
-
-5. **Calculate posterior:**
-   - log_odds_posterior = 0.0 + 1.85 = 1.85
-   - p_bayesian = exp(1.85) / (1 + exp(1.85)) = 0.864 = 86.4%
-
-6. **Calculate p_neutral (no evidence baseline):**
-   - This is just the prior: p_neutral = p0 = 0.50
-
-**Output:**
 {
-  "p0": 0.50,
-  "log_odds_prior": 0.0,
-  "evidence_summary": [
-    {
-      "id": "ev1",
-      "LLR": 1.2,
-      "weight": 0.72,
-      "adjusted_LLR": 0.611
-    },
-    // ... all evidence
-  ],
-  "correlation_adjustments": {
-    "method": "1/sqrt(n) shrinkage",
-    "details": "2 clusters identified: [ev1,ev2] shrunk by 0.707, [ev5,ev6,ev7] shrunk by 0.577"
-  },
-  "log_odds_posterior": 1.85,
-  "p_bayesian": 0.864,
-  "p_neutral": 0.50,
-  "sensitivity_analysis": [
-    {"scenario": "baseline", "p": 0.864},
-    {"scenario": "+25% LLR", "p": 0.912},
-    {"scenario": "-25% LLR", "p": 0.791},
-    {"scenario": "remove weakest 20%", "p": 0.878}
+  "calculation_steps": [
+    "Step 1: Started with prior p0 = 0.50 (neutral position), which converts to log-odds = 0.0",
+    "Step 2: Processed 10 evidence items, adjusting each LLR by quality scores (verifiability × independence × recency)",
+    "Step 3: Applied correlation shrinkage (1/sqrt(n)) to 2 clusters to avoid double-counting related evidence",
+    "Step 4: Summed all adjusted LLRs: total = +1.85 (net evidence points toward YES)",
+    "Step 5: Updated log-odds: 0.0 + 1.85 = 1.85",
+    "Step 6: Converted to probability: p_bayesian = exp(1.85)/(1+exp(1.85)) = 86.4%",
+    "Step 7: Sensitivity check shows result is robust (ranges from 79% to 91% across scenarios)"
   ]
 }
 
-## Important Guidelines
+## Critical Rules
 
-- **Show all math**: Provide numeric trace for auditability
-- **Be precise**: Use exact numbers, not approximations
-- **Explain adjustments**: Why was evidence weighted/shrunk?
-- **Test sensitivity**: How robust is the conclusion?
-- **Stay in bounds**: Clamp p_bayesian to [0.01, 0.99] to avoid extremes
-- **Document assumptions**: Make correlation clustering logic clear
+❌ DO NOT recalculate anything
+❌ DO NOT perform mathematical operations
+✅ DO use the exact values provided
+✅ DO explain what each step means
+✅ DO make it understandable to non-technical users
 
-Remember: This is mathematical aggregation, not subjective judgment.
-Follow the formulas precisely. The math determines the output.
-Your role is to apply Bayesian inference correctly, not to opine on the answer.
-You must respond with valid JSON in exactly this format:
-{{
-  p0: number_between_0_and_1,
-  log_odds_prior: number,
-  evidence_summary: [
-    {{
-      id: evidence_id,
-      LLR: number,
-      weight: number,
-      adjusted_LLR: number
-    }}
-  ],
-  correlation_adjustments: {{
-    method: string,
-    details: string
-  }},
-  log_odds_posterior: number,
-  p_bayesian: number,
-  p_neutral: number,
-  sensitivity_analysis: [
-    {{
-      scenario: string,
-      p: number
-    }}
-  ]
-}}"""
+Your output will be combined with the ACTUAL calculated values from BayesianCalculator.
+"""
 
     def get_output_schema(self) -> Type[BaseModel]:
         """Return AnalystOutput schema"""
         return AnalystOutput
-
-
 
     async def analyze(
         self,
@@ -223,28 +105,95 @@ You must respond with valid JSON in exactly this format:
         market_question: str
     ) -> AnalystOutput:
         """
-        Perform Bayesian analysis on evidence
+        Perform Bayesian aggregation of evidence
 
         Args:
             prior_p: Prior probability from Planner
-            evidence_items: Evidence items with LLRs
-            critic_output: Critic analysis results
-            market_question: The market question
+            evidence_items: All evidence from Researchers
+            critic_output: Correlation warnings from Critic
+            market_question: Main question (for context)
 
         Returns:
-            AnalystOutput with Bayesian posterior
+            AnalystOutput with p_bayesian and full analysis
+
+        Raises:
+            ValueError: If inputs are invalid
         """
+        # Validate inputs
+        if prior_p is None or not isinstance(prior_p, (int, float)):
+            raise ValueError(f"prior_p must be numeric, got {type(prior_p)}")
+
+        if not (0.0 <= prior_p <= 1.0):
+            raise ValueError(
+                f"prior_p must be in range [0.0, 1.0], got {prior_p}"
+            )
+
+        if evidence_items is None or not isinstance(evidence_items, list):
+            raise ValueError(f"evidence_items must be list, got {type(evidence_items)}")
+
+        if market_question is None or not isinstance(market_question, str):
+            raise ValueError(f"market_question must be string, got {type(market_question)}")
+
+        if not market_question.strip():
+            raise ValueError("market_question cannot be empty")
+
+        if critic_output is None or not isinstance(critic_output, CriticOutput):
+            raise ValueError(f"critic_output must be CriticOutput, got {type(critic_output)}")
+
+        self.logger.info(
+            f"Analyzing {len(evidence_items)} evidence items with prior={prior_p:.2%}"
+        )
+
+        # Convert evidence to format for calculator
+        evidence_dicts = [
+            {
+                'id': f"ev_{i}",
+                'LLR': ev.estimated_LLR,
+                'verifiability_score': ev.verifiability_score,
+                'independence_score': ev.independence_score,
+                'recency_score': ev.recency_score
+            }
+            for i, ev in enumerate(evidence_items)
+        ]
+
+        # Extract correlation clusters from Critic
+        correlation_clusters = [
+            warning.cluster for warning in critic_output.correlation_warnings
+        ]
+
+        # Perform Bayesian calculation
+        bayesian_result = self.calculator.aggregate_evidence(
+            prior_p=prior_p,
+            evidence_items=evidence_dicts,
+            correlation_clusters=correlation_clusters
+        )
+
+        # Run sensitivity analysis
+        sensitivity_results = self.calculator.sensitivity_analysis(
+            prior_p=prior_p,
+            evidence_items=evidence_dicts
+        )
+
+        # Prepare input for LLM (to generate explanatory output)
         input_data = {
+            "market_question": market_question,
             "prior_p": prior_p,
-            "evidence_items": evidence_items,
-            "critic_output": critic_output.dict() if hasattr(critic_output, "dict") else critic_output,
-            "market_question": market_question
+            "evidence_items": evidence_dicts,
+            "bayesian_result": bayesian_result,
+            "sensitivity_results": sensitivity_results,
+            "correlation_adjustments": {
+                "method": "1/sqrt(n) shrinkage",
+                "clusters": correlation_clusters,
+                "num_clusters": len(correlation_clusters)
+            }
         }
 
-        self.logger.info(f"Analyzing {len(evidence_items)} evidence items with prior={prior_p:.1%}")
-
+        # Get LLM to format output with explanations
         result = await self.invoke(input_data)
 
-        self.logger.info(f"Analysis complete: p_bayesian={result.p_bayesian:.2%}")
+        self.logger.info(
+            f"Analysis complete: p_bayesian={result.p_bayesian:.2%} "
+            f"(prior={prior_p:.2%})"
+        )
 
         return result

@@ -15,8 +15,9 @@ class KalshiClient:
     """Client for Kalshi prediction market API"""
 
     def __init__(self):
-        self.base_url = settings.KALSHI_API_URL
+        self.base_url = settings.KALSHI_API_URL.rstrip('/')  # Remove trailing slash
         self.api_key_id = settings.KALSHI_API_KEY_ID
+        self.api_key = settings.KALSHI_API_KEY  # API key for authentication
         self.private_key_path = settings.KALSHI_PRIVATE_KEY_PATH
         self.private_key = None
 
@@ -89,7 +90,11 @@ class KalshiClient:
         """
         headers = {}
 
-        if self.api_key_id and self.private_key:
+        # Try API key authentication first (simpler method)
+        if self.api_key:
+            headers['Authorization'] = f'Bearer {self.api_key}'
+        elif self.api_key_id and self.private_key:
+            # Fallback to RSA signature method
             timestamp = int(time.time() * 1000)
             signature = self._sign_request(method, path, timestamp)
 
@@ -128,9 +133,13 @@ class KalshiClient:
 
         async with httpx.AsyncClient() as client:
             try:
+                # Get auth headers for this request
+                auth_headers = self._get_auth_headers("GET", "/events")
+
                 response = await client.get(
                     f"{self.base_url}/events",
                     params=params,
+                    headers=auth_headers,
                     timeout=30.0
                 )
                 response.raise_for_status()
@@ -152,8 +161,12 @@ class KalshiClient:
         """
         async with httpx.AsyncClient() as client:
             try:
+                # Get auth headers for this request
+                auth_headers = self._get_auth_headers("GET", f"/events/{event_ticker}")
+
                 response = await client.get(
                     f"{self.base_url}/events/{event_ticker}",
+                    headers=auth_headers,
                     timeout=30.0
                 )
                 response.raise_for_status()
@@ -193,9 +206,13 @@ class KalshiClient:
 
         async with httpx.AsyncClient() as client:
             try:
+                # Get auth headers for this request
+                auth_headers = self._get_auth_headers("GET", "/markets")
+
                 response = await client.get(
                     f"{self.base_url}/markets",
                     params=params,
+                    headers=auth_headers,
                     timeout=30.0
                 )
                 response.raise_for_status()
@@ -217,8 +234,12 @@ class KalshiClient:
         """
         async with httpx.AsyncClient() as client:
             try:
+                # Get auth headers for this request
+                auth_headers = self._get_auth_headers("GET", f"/markets/{market_ticker}")
+
                 response = await client.get(
                     f"{self.base_url}/markets/{market_ticker}",
+                    headers=auth_headers,
                     timeout=30.0
                 )
                 response.raise_for_status()
@@ -240,8 +261,12 @@ class KalshiClient:
         """
         async with httpx.AsyncClient() as client:
             try:
+                # Get auth headers for this request
+                auth_headers = self._get_auth_headers("GET", f"/markets/{market_ticker}/orderbook")
+
                 response = await client.get(
                     f"{self.base_url}/markets/{market_ticker}/orderbook",
+                    headers=auth_headers,
                     timeout=30.0
                 )
                 response.raise_for_status()
@@ -285,14 +310,53 @@ class KalshiClient:
         if not market:
             return None
 
-        # Kalshi uses "yes_price" in cents (0-100)
-        yes_price = market.get('yes_price')
-        if yes_price is not None:
-            return float(yes_price) / 100.0
+        # Kalshi uses prices in cents (0-100), but the API structure may vary
+        # According to API docs, we should use the midpoint of bid/ask or last_price
 
-        # Fallback: try last_price
+        # Try to calculate midpoint from best bid/ask (dollars format)
+        yes_bid_dollars = market.get('yes_bid_dollars')
+        no_ask_dollars = market.get('no_ask_dollars')
+
+        if yes_bid_dollars is not None and no_ask_dollars is not None:
+            # Midpoint between yes_bid_dollars and no_ask_dollars gives the implied probability
+            midpoint = (float(yes_bid_dollars) + float(no_ask_dollars)) / 2.0
+            return midpoint  # Already in dollars (0-1)
+
+        # Try to calculate midpoint from best bid/ask (cents format)
+        yes_bid = market.get('yes_bid')
+        no_ask = market.get('no_ask')
+
+        if yes_bid is not None and no_ask is not None:
+            # Midpoint between yes_bid and no_ask gives the implied probability
+            midpoint = (float(yes_bid) + float(no_ask)) / 2.0
+            return midpoint / 100.0  # Convert from cents to probability
+
+        # Fallback: try last_price (cents format)
         last_price = market.get('last_price')
         if last_price is not None:
             return float(last_price) / 100.0
+
+        # Fallback: try last_price_dollars (dollars format)
+        last_price_dollars = market.get('last_price_dollars')
+        if last_price_dollars is not None:
+            return float(last_price_dollars)
+
+        # Fallback: try yes_bid or yes_ask individually (cents format)
+        yes_bid = market.get('yes_bid')
+        if yes_bid is not None:
+            return float(yes_bid) / 100.0
+
+        yes_ask = market.get('yes_ask')
+        if yes_ask is not None:
+            return float(yes_ask) / 100.0
+
+        # Final fallback: try yes_bid_dollars or yes_ask_dollars (dollars format)
+        yes_bid_dollars = market.get('yes_bid_dollars')
+        if yes_bid_dollars is not None:
+            return float(yes_bid_dollars)
+
+        yes_ask_dollars = market.get('yes_ask_dollars')
+        if yes_ask_dollars is not None:
+            return float(yes_ask_dollars)
 
         return None
