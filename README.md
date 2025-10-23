@@ -1,0 +1,329 @@
+# POLYSEER
+
+**Autonomous Multi-Agent Bayesian Arbitrage Intelligence System for Prediction Markets**
+
+POLYSEER estimates "true" event probabilities from prediction markets using Bayesian aggregation of evidence, detects mispricing across platforms (Polymarket, Kalshi), and reports forecasts with full provenance.
+
+---
+
+## Features
+
+- **Multi-Agent Architecture** (LangGraph): Planner → Researchers (parallel) → Critic → Analyst → Arbitrage Detector → Reporter
+- **Bayesian Probability Estimation**: Log-likelihood ratio (LLR) aggregation with correlation adjustments
+- **Cross-Platform Arbitrage Detection**: Compare probabilities across Polymarket, Kalshi, and Calci
+- **Kelly Criterion Position Sizing**: Conservative risk management with capped Kelly fractions
+- **Evidence Provenance**: Full URL tracking, source verification, and transparency
+- **Research Automation**: Valyu AI integration for deep web research
+
+---
+
+## Quick Start
+
+### 1. Installation
+
+```bash
+# Clone the repository
+cd Pred_M
+
+# Install dependencies
+pip install -e .
+
+# Or with optional dependencies
+pip install -e ".[dev,web]"
+```
+
+### 2. Configuration
+
+Create a `.env` file from the template:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your API keys:
+
+```env
+# Required
+ANTHROPIC_API_KEY=sk-ant-...
+VALYU_API_KEY=...
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=eyJhbGc...
+
+# Optional (for trading)
+POLYMARKET_PRIVATE_KEY=...
+KALSHI_API_KEY_ID=...
+```
+
+### 3. Database Setup
+
+Run the SQL schema in your Supabase project:
+
+```bash
+# Using Supabase CLI
+supabase db reset --db-url postgresql://...
+
+# Or manually execute
+psql -h ... -U ... -f polyseer/database/schema.sql
+```
+
+### 4. Run Your First Analysis
+
+```python
+from polyseer.workflow import run_polyseer_workflow
+
+result = await run_polyseer_workflow(
+    market_url="https://polymarket.com/event/...",
+    providers=["polymarket", "kalshi"],
+    bankroll=10000,
+    edge_threshold=0.02
+)
+
+print(f"Bayesian Probability: {result.p_bayesian:.2%}")
+print(f"Best Arbitrage: {result.arbitrage_output.best_opportunity}")
+```
+
+---
+
+## Architecture
+
+### Agent Workflow
+
+```
+┌──────────┐
+│ Planner  │  Breaks down market question → subclaims, priors, search seeds
+└────┬─────┘
+     │
+     ├──────────────┬───────────────┐
+     ▼              ▼               ▼
+┌─────────┐   ┌─────────┐    ┌─────────┐
+│Research │   │Research │    │Research │  Gather evidence (PRO/CON) using Valyu
+│Pro      │   │Con      │    │General  │
+└────┬────┘   └────┬────┘    └────┬────┘
+     │             │              │
+     └─────────────┴──────────────┘
+                   │
+                   ▼
+            ┌──────────┐
+            │  Critic  │  Detect correlation, bias, missing topics
+            └────┬─────┘
+                 │
+                 ▼
+            ┌──────────┐
+            │ Analyst  │  Bayesian aggregation → p_bayesian
+            └────┬─────┘
+                 │
+                 ▼
+        ┌─────────────────┐
+        │Arbitrage Detector│  Compare p_bayesian vs market prices
+        └────┬────────────┘
+             │
+             ▼
+        ┌────────────┐
+        │  Reporter  │  JSON + Markdown summary
+        └────────────┘
+```
+
+### Key Components
+
+#### 1. **Planner Agent** (`polyseer/agents/planner.py`)
+- Parses market question
+- Defines prior probability `p0` with justification
+- Generates 4-10 subclaims (pro/con)
+- Creates search seeds for research
+
+#### 2. **Researcher Agents** (`polyseer/agents/researcher.py`)
+- Parallel evidence gathering (PRO + CON)
+- Uses Valyu AI for deep web search
+- Assigns LLRs within calibrated ranges:
+  - A-grade (primary): ±1-3
+  - B-grade (high-quality secondary): ±0.3-1.0
+  - C-grade (secondary): ±0.1-0.5
+  - D-grade (weak): ±0.01-0.2
+
+#### 3. **Critic Agent** (`polyseer/agents/critic.py`)
+- Detects duplicate/correlated evidence
+- Identifies over-represented sources
+- Flags missing coverage areas
+- Proposes follow-up searches
+
+#### 4. **Analyst Agent** (`polyseer/agents/analyst.py`)
+- **Bayesian Math**:
+  ```
+  log_odds_prior = ln(p0 / (1-p0))
+  adjusted_LLR = LLR × verifiability × independence × recency
+  log_odds_posterior = log_odds_prior + Σ(adjusted_LLR)
+  p_bayesian = exp(log_odds_post) / (1 + exp(log_odds_post))
+  ```
+- Correlation handling: Shrinkage via `1/sqrt(cluster_size)`
+- Sensitivity analysis (±25% LLR, remove weakest 20%)
+
+#### 5. **Arbitrage Detector** (`polyseer/agents/arbitrage.py`)
+- Fetches prices from Polymarket, Kalshi, Calci
+- **Kelly Criterion**: `kelly = edge / (1 - p_market)` (capped at 5%)
+- **Expected Value**: `EV = (p_bayesian - p_market) - costs`
+- Filters by minimum edge threshold (default 2%)
+
+#### 6. **Reporter Agent** (`polyseer/agents/reporter.py`)
+- Generates JSON + Markdown report
+- TL;DR (1-2 sentences)
+- Top 3 PRO/CON drivers
+- Arbitrage summary
+- **Always ends with**: "NOT FINANCIAL ADVICE"
+
+---
+
+## API Clients
+
+### Polymarket
+
+```python
+from polyseer.api_clients import PolymarketClient
+
+client = PolymarketClient()
+
+# Get market metadata + price
+market = await client.get_market_with_price("will-trump-win-2024")
+print(market['prices']['implied_probability'])
+```
+
+### Kalshi
+
+```python
+from polyseer.api_clients import KalshiClient
+
+client = KalshiClient()
+
+# Get market
+market = await client.get_market("PRES2024-TRUMP")
+price = await client.get_market_price("PRES2024-TRUMP")
+```
+
+### Valyu AI
+
+```python
+from polyseer.api_clients import ValyuResearchClient
+
+client = ValyuResearchClient()
+
+# Search with date filter
+results = await client.search_with_date_filter(
+    query="Trump polling Michigan",
+    days_back=30,
+    num_results=10
+)
+```
+
+---
+
+## Database Schema
+
+### Core Tables
+
+- `markets`: Market metadata (provider, slug, question)
+- `market_prices`: Time-series price data (with timestamp-based partitioning)
+- `research_plans`: Planner output (prior, subclaims, search seeds)
+- `evidence`: Researcher output (URL, LLR, scores)
+- `critic_analysis`: Critic output (correlations, missing topics)
+- `bayesian_analysis`: Analyst output (p_bayesian, log-odds)
+- `arbitrage_opportunities`: Arbitrage Detector output (EV, Kelly fractions)
+- `workflow_executions`: Workflow tracking
+
+### Views
+
+- `latest_market_analysis`: Most recent Bayesian analysis per market
+- `best_arbitrage_opportunities`: Top EV opportunities (last 24h)
+
+---
+
+## Configuration
+
+### Risk Management Settings
+
+```python
+# In .env
+DEFAULT_BANKROLL=10000
+MAX_KELLY_FRACTION=0.05  # 5% max bet size
+MIN_EDGE_THRESHOLD=0.02  # 2% minimum edge
+```
+
+### LLR Calibration Ranges
+
+Adjust in agent prompts based on empirical validation:
+
+- **Primary sources** (official data, government stats): ±1-3
+- **High-quality secondary** (NYT, WSJ, Reuters): ±0.3-1.0
+- **Secondary** (blogs, newsletters): ±0.1-0.5
+- **Weak** (social media, rumors): ±0.01-0.2
+
+---
+
+## Development
+
+### Run Tests
+
+```bash
+pytest polyseer/tests/
+```
+
+### Code Quality
+
+```bash
+# Format
+black polyseer/
+
+# Lint
+ruff check polyseer/
+
+# Type check
+mypy polyseer/
+```
+
+### Contributing
+
+1. All agent outputs must follow JSON schemas in `polyseer/models/schemas.py`
+2. Include provenance (URLs, dates) for all evidence
+3. End all reports with "NOT FINANCIAL ADVICE"
+4. Add unit tests for Bayesian math changes
+5. Validate LLR ranges empirically
+
+---
+
+## Roadmap
+
+- [x] Core agent infrastructure
+- [x] API clients (Polymarket, Kalshi, Valyu)
+- [x] Bayesian math utilities
+- [x] Supabase schema
+- [ ] LangGraph workflow implementation
+- [ ] FastAPI REST endpoints
+- [ ] Web UI dashboard
+- [ ] Real-time WebSocket price feeds
+- [ ] Automated workflow scheduling
+- [ ] Advanced correlation detection (NLP similarity)
+- [ ] Multi-market portfolio optimization
+
+---
+
+## Disclaimer
+
+**POLYSEER IS FOR RESEARCH PURPOSES ONLY. NOT FINANCIAL ADVICE.**
+
+This system provides probability estimates and arbitrage analysis based on automated research and Bayesian inference. All outputs are experimental and should not be used as the sole basis for trading decisions. Prediction markets involve financial risk. Always conduct your own research and consult a financial advisor before trading.
+
+---
+
+## License
+
+MIT License - See LICENSE file
+
+---
+
+## Support
+
+- **Documentation**: [docs/](docs/)
+- **Issues**: [GitHub Issues](https://github.com/youruser/polyseer/issues)
+- **Discord**: [Join our community](#)
+
+---
+
+Built with LangChain, LangGraph, Claude 3.5 Sonnet, and Valyu AI.
