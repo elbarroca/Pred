@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 
-from arbee.api_clients.polymarket import PolymarketGammaClient
+from arbee.api_clients.polymarket import PolymarketClient
 from arbee.api_clients.kalshi import KalshiClient
 from arbee.api_clients.valyu import ValyuResearchClient
 
@@ -41,7 +41,7 @@ class MarketMatcher:
     """Matches markets across prediction platforms for arbitrage analysis"""
 
     def __init__(self):
-        self.poly_client = PolymarketGammaClient()
+        self.poly_client = PolymarketClient()
         self.kalshi_client = KalshiClient()
         self.valyu_client = ValyuResearchClient()
 
@@ -66,8 +66,8 @@ class MarketMatcher:
 
         # Fetch markets from both platforms
         poly_markets, kalshi_markets = await asyncio.gather(
-            self.poly_client.get_markets(limit=poly_limit, active=True),
-            self.kalshi_client.get_markets(limit=kalshi_limit)
+            self.poly_client.get_event(limit=poly_limit, active=True),
+            self.kalshi_client.get_event(limit=kalshi_limit)
         )
 
         print(f"📊 Retrieved {len(poly_markets)} Polymarket and {len(kalshi_markets)} Kalshi markets")

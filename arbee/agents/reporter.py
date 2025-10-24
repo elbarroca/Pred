@@ -4,7 +4,7 @@ Synthesizes all agent outputs into actionable intelligence
 """
 from typing import Type, Dict, Any, List
 from arbee.agents.base import BaseAgent
-from arbee.models.schemas import ReporterOutput
+from arbee.agents.schemas import ReporterOutput
 from pydantic import BaseModel
 
 
@@ -208,6 +208,21 @@ Remember: Your audience includes both technical users (who want full JSON) and n
         """Return ReporterOutput schema"""
         return ReporterOutput
 
+    def get_human_prompt(self) -> str:
+        """Human prompt for report generation"""
+        return """Generate a comprehensive POLYSEER analysis report.
+
+Market Question: {market_question}
+Planner Output: {planner_output}
+Researcher Output: {researcher_output}
+Critic Output: {critic_output}
+Analyst Output: {analyst_output}
+Arbitrage Opportunities: {arbitrage_opportunities}
+Timestamp: {timestamp}
+Workflow ID: {workflow_id}
+
+Create a detailed report with JSON data and executive summary."""
+
     async def generate_report(
         self,
         market_question: str,
@@ -248,7 +263,8 @@ Remember: Your audience includes both technical users (who want full JSON) and n
             **context
         }
 
-        result = await self.invoke(input_data)
+        # Invoke with reflection enabled for quality checking
+        result = await self.invoke(input_data, enable_reflection=True)
 
         self.logger.info(f"Report generated: {len(result.executive_summary)} chars")
 

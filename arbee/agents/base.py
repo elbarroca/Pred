@@ -42,12 +42,14 @@ class BaseAgent(ABC):
         model_name: str = "gpt-4o-mini",
         temperature: float = 0.1,
         max_tokens: int = 4096,
-        max_retries: int = 3) -> None:
+        max_retries: int = 3,
+        max_reflection_iterations: int = 3) -> None:
         self.settings = settings or Settings()
         self.model_name = model_name
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_retries = max_retries
+        self.max_reflection_iterations = max_reflection_iterations
 
         # Initialize logger
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -66,7 +68,8 @@ class BaseAgent(ABC):
             'successful_calls': 0,
             'failed_calls': 0,
             'total_tokens': 0,
-            'errors': []
+            'errors': [],
+            'reflection_iterations': []
         }
 
         self.logger.info(f"{self.__class__.__name__} initialized with model {model_name}")
@@ -86,6 +89,30 @@ class BaseAgent(ABC):
         Must be implemented by each agent
         """
         pass
+
+    def validate_output(self, output: BaseModel) -> tuple[bool, Optional[str]]:
+        """
+        Validate agent output and provide feedback for reflection
+
+        Args:
+            output: The generated output to validate
+
+        Returns:
+            Tuple of (is_valid, feedback_message)
+            - is_valid: True if output passes validation
+            - feedback_message: None if valid, otherwise specific feedback for correction
+
+        Note: Override this method in subclasses for custom validation logic
+        """
+        # Default validation: check that output is not None and is correct type
+        if output is None:
+            return False, "Output is None"
+
+        expected_type = self.get_output_schema()
+        if not isinstance(output, expected_type):
+            return False, f"Output type mismatch: expected {expected_type}, got {type(output)}"
+
+        return True, None
 
     def create_prompt_template(
         self,
@@ -112,56 +139,60 @@ class BaseAgent(ABC):
         system_msg += "\n\nYou must respond with valid JSON. The response will be validated against the required schema."
 
         # Create template with human prompt if available
-        human_prompt = ""
-        template_vars = ["input"]  # Default variable name
-
         if hasattr(self, 'get_human_prompt'):
             human_prompt = self.get_human_prompt()
-            # Extract template variables from the human prompt
-            import re
-            vars_in_prompt = re.findall(r'\{([^}]+)\}', human_prompt)
-            if vars_in_prompt:
-                template_vars = vars_in_prompt
-
-        if human_prompt:
-            template_str = system_msg + "\n\n" + human_prompt + "\n\nAssistant:"
+            # Create separate system and human message templates
+            # This allows proper variable parsing in each template
+            messages = [
+                SystemMessagePromptTemplate.from_template(system_msg),
+                HumanMessagePromptTemplate.from_template(human_prompt)
+            ]
         else:
-            template_str = system_msg + "\n\nHuman: {input}\n\nAssistant:"
-
-        messages = [
-            SystemMessagePromptTemplate.from_template(template_str)
-        ]
+            # Fallback to simple input variable
+            messages = [
+                SystemMessagePromptTemplate.from_template(system_msg),
+                HumanMessagePromptTemplate.from_template("{input}")
+            ]
 
         return ChatPromptTemplate.from_messages(messages)
 
     def create_chain(self, prompt_template: ChatPromptTemplate):
         """
-        Create a LangChain LCEL chain with Pydantic output parsing
+        Create a LangChain LCEL chain with structured output enforcement
 
         Args:
             prompt_template: The prompt template to use
 
         Returns:
-            Runnable chain: prompt | llm | parser
+            Runnable chain: prompt | llm_with_structured_output
         """
         output_schema = self.get_output_schema()
-        parser = PydanticOutputParser(pydantic_object=output_schema)
 
-        chain = prompt_template | self.llm | parser
+        # Use OpenAI's structured output feature for guaranteed schema compliance
+        # This ensures JSON output matches the Pydantic schema exactly
+        llm_with_structured = self.llm.with_structured_output(
+            output_schema,
+            method="json_schema",  # Use strict JSON schema mode
+            include_raw=False  # Return parsed object directly
+        )
+
+        chain = prompt_template | llm_with_structured
 
         return chain
 
     async def invoke(
         self,
         input_data: Dict[str, Any],
-        prompt_override: Optional[ChatPromptTemplate] = None
+        prompt_override: Optional[ChatPromptTemplate] = None,
+        enable_reflection: bool = True
     ) -> BaseModel:
         """
-        Invoke the agent with input data
+        Invoke the agent with input data, optionally with reflection loop
 
         Args:
             input_data: Dictionary of input variables for the prompt
             prompt_override: Optional custom prompt template
+            enable_reflection: Whether to use reflection/validation loop
 
         Returns:
             Validated Pydantic model output
@@ -175,6 +206,18 @@ class BaseAgent(ABC):
         prompt = prompt_override or self.create_prompt_template()
         chain = self.create_chain(prompt)
 
+        # Reflection loop (if enabled)
+        if enable_reflection:
+            return await self._invoke_with_reflection(chain, input_data)
+        else:
+            return await self._invoke_simple(chain, input_data)
+
+    async def _invoke_simple(
+        self,
+        chain,
+        input_data: Dict[str, Any]
+    ) -> BaseModel:
+        """Simple invoke without reflection (legacy behavior)"""
         # Retry logic
         last_error = None
         for attempt in range(self.max_retries):
@@ -220,6 +263,90 @@ class BaseAgent(ABC):
             f"{self.__class__.__name__} failed after {self.max_retries} attempts"
         )
         raise last_error
+
+    async def _invoke_with_reflection(
+        self,
+        chain,
+        input_data: Dict[str, Any]
+    ) -> BaseModel:
+        """
+        Invoke with reflection loop: generate → validate → regenerate if needed
+
+        This implements the Reflection Agent pattern from LangChain best practices
+        """
+        last_error = None
+        best_output = None
+
+        for iteration in range(self.max_reflection_iterations):
+            try:
+                self.logger.info(
+                    f"🔄 {self.__class__.__name__} reflection iteration {iteration + 1}/{self.max_reflection_iterations}"
+                )
+
+                # Generate output
+                start_time = datetime.now()
+                result = await chain.ainvoke(input_data)
+                duration = (datetime.now() - start_time).total_seconds()
+
+                # Validate output
+                is_valid, feedback = self.validate_output(result)
+
+                if is_valid:
+                    # Success! Output passed validation
+                    self.stats['successful_calls'] += 1
+                    self.stats['reflection_iterations'].append(iteration + 1)
+                    self.logger.info(
+                        f"✅ {self.__class__.__name__} completed successfully "
+                        f"in {duration:.2f}s (after {iteration + 1} reflection iterations)"
+                    )
+                    return result
+                else:
+                    # Output failed validation, add feedback for next iteration
+                    self.logger.warning(
+                        f"⚠️  Reflection iteration {iteration + 1} failed validation: {feedback}"
+                    )
+                    best_output = result  # Keep best attempt
+
+                    # Add feedback to prompt for next iteration
+                    if 'reflection_feedback' not in input_data:
+                        input_data['reflection_feedback'] = []
+                    input_data['reflection_feedback'].append({
+                        'iteration': iteration + 1,
+                        'issue': feedback,
+                        'instruction': 'Please correct the issues mentioned and regenerate the output.'
+                    })
+
+            except Exception as e:
+                last_error = e
+                self.logger.warning(
+                    f"Reflection iteration {iteration + 1} raised exception: {str(e)}"
+                )
+
+                # Record error
+                self.stats['errors'].append({
+                    'timestamp': datetime.now().isoformat(),
+                    'reflection_iteration': iteration + 1,
+                    'error': str(e)
+                })
+
+        # All reflection iterations exhausted
+        if best_output is not None:
+            self.logger.warning(
+                f"⚠️  {self.__class__.__name__} exhausted reflection iterations, "
+                f"returning best attempt (may not pass validation)"
+            )
+            self.stats['successful_calls'] += 1
+            return best_output
+
+        # Complete failure
+        self.stats['failed_calls'] += 1
+        self.logger.error(
+            f"❌ {self.__class__.__name__} failed after {self.max_reflection_iterations} reflection iterations"
+        )
+        if last_error:
+            raise last_error
+        else:
+            raise ValueError("All reflection iterations failed validation with no valid output produced")
 
     def get_stats(self) -> Dict[str, Any]:
         """Return usage statistics"""

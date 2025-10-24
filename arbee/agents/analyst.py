@@ -2,9 +2,9 @@
 Analyst Agent - Bayesian aggregation and probability estimation
 Integrates BayesianCalculator for rigorous mathematical analysis
 """
-from typing import Type, List, Dict, Any
+from typing import Type, List, Dict, Any, Optional
 from arbee.agents.base import BaseAgent
-from arbee.models.schemas import AnalystOutput, Evidence, CriticOutput
+from arbee.agents.schemas import AnalystOutput, CriticOutput, Evidence
 from arbee.utils.bayesian import BayesianCalculator
 from pydantic import BaseModel
 
@@ -70,17 +70,14 @@ Each step should:
 
 ## Example Output Format
 
-{
-  "calculation_steps": [
-    "Step 1: Started with prior p0 = 0.50 (neutral position), which converts to log-odds = 0.0",
-    "Step 2: Processed 10 evidence items, adjusting each LLR by quality scores (verifiability × independence × recency)",
-    "Step 3: Applied correlation shrinkage (1/sqrt(n)) to 2 clusters to avoid double-counting related evidence",
-    "Step 4: Summed all adjusted LLRs: total = +1.85 (net evidence points toward YES)",
-    "Step 5: Updated log-odds: 0.0 + 1.85 = 1.85",
-    "Step 6: Converted to probability: p_bayesian = exp(1.85)/(1+exp(1.85)) = 86.4%",
-    "Step 7: Sensitivity check shows result is robust (ranges from 79% to 91% across scenarios)"
-  ]
-}
+Your output should contain a calculation_steps array with explanations like:
+Step 1 - Started with prior p0 = 0.50 (neutral position), which converts to log-odds = 0.0
+Step 2 - Processed 10 evidence items, adjusting each LLR by quality scores (verifiability × independence × recency)
+Step 3 - Applied correlation shrinkage (1/sqrt(n)) to 2 clusters to avoid double-counting related evidence
+Step 4 - Summed all adjusted LLRs: total = +1.85 (net evidence points toward YES)
+Step 5 - Updated log-odds: 0.0 + 1.85 = 1.85
+Step 6 - Converted to probability: p_bayesian = exp(1.85)/(1+exp(1.85)) = 86.4%
+Step 7 - Sensitivity check shows result is robust (ranges from 79% to 91% across scenarios)
 
 ## Critical Rules
 
@@ -96,6 +93,36 @@ Your output will be combined with the ACTUAL calculated values from BayesianCalc
     def get_output_schema(self) -> Type[BaseModel]:
         """Return AnalystOutput schema"""
         return AnalystOutput
+
+    def get_human_prompt(self) -> str:
+        """Human prompt for Bayesian analysis explanation"""
+        return """You are explaining ALREADY CALCULATED Bayesian results in clear language.
+
+Market Question: {market_question}
+
+Prior Probability (p0): {prior_p}
+
+Evidence Items Analyzed: {evidence_items}
+
+Bayesian Calculation Results: {bayesian_result}
+
+Sensitivity Analysis: {sensitivity_results}
+
+Correlation Adjustments: {correlation_adjustments}
+
+CRITICAL: The math is already done. Your job is to EXPLAIN these results.
+
+Generate calculation_steps that explain what these numbers mean in plain language.
+Each step should reference the actual calculated values and explain what they represent.
+
+Example steps:
+Step 1 - Started with prior p0 = X.XX (neutral position)
+Step 2 - Processed Y evidence items, adjusting each by quality scores
+Step 3 - Applied correlation shrinkage to Z clusters
+Step 4 - Total adjusted LLR = +/-N.NN
+Step 5 - Final p_bayesian = XX.X%
+
+Make it understandable to non-technical users."""
 
     async def analyze(
         self,
@@ -197,3 +224,56 @@ Your output will be combined with the ACTUAL calculated values from BayesianCalc
         )
 
         return result
+
+    def validate_output(self, output: BaseModel) -> tuple[bool, Optional[str]]:
+        """
+        Validate AnalystOutput with Bayesian calculation checks
+
+        Checks:
+        1. p_bayesian is in valid range [0.01, 0.99]
+        2. calculation_steps array is present and non-empty
+        3. Sensitivity analysis shows reasonable robustness
+        4. Evidence summary is present
+        """
+        # Base validation
+        is_valid, feedback = super().validate_output(output)
+        if not is_valid:
+            return is_valid, feedback
+
+        # Type check
+        if not isinstance(output, AnalystOutput):
+            return False, f"Expected AnalystOutput, got {type(output)}"
+
+        issues = []
+
+        # Check p_bayesian range
+        if not (0.01 <= output.p_bayesian <= 0.99):
+            issues.append(f"p_bayesian ({output.p_bayesian:.2%}) is outside valid range [1%, 99%]")
+
+        # Check calculation_steps
+        if not output.calculation_steps or len(output.calculation_steps) == 0:
+            issues.append("calculation_steps is empty - must provide step-by-step reasoning")
+        elif len(output.calculation_steps) < 3:
+            issues.append(f"calculation_steps has only {len(output.calculation_steps)} steps - need at least 3 steps explaining the Bayesian process")
+
+        # Check evidence summary
+        if not output.evidence_summary or len(output.evidence_summary) == 0:
+            issues.append("evidence_summary is empty - must summarize evidence contributions")
+
+        # Sensitivity analysis robustness check (optional, warn only)
+        if output.sensitivity_analysis and len(output.sensitivity_analysis) >= 2:
+            probs = [s.p for s in output.sensitivity_analysis]
+            sensitivity_range = max(probs) - min(probs)
+            if sensitivity_range > 0.4:  # More than 40% variation
+                # This is just a warning, not a failure
+                self.logger.warning(
+                    f"⚠️  High sensitivity detected: probability ranges from "
+                    f"{min(probs):.1%} to {max(probs):.1%} (range={sensitivity_range:.1%})"
+                )
+
+        if issues:
+            feedback_msg = "Bayesian analysis validation issues:\n" + "\n".join(issues)
+            return False, feedback_msg
+
+        # All validation passed
+        return True, None

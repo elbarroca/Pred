@@ -2,9 +2,9 @@
 Critic Agent - Quality control and correlation detection
 Reviews evidence for dependencies, biases, and coverage gaps
 """
-from typing import Type, List, Dict, Any
+from typing import Type, List, Dict, Any, Optional
 from arbee.agents.base import BaseAgent
-from arbee.models.schemas import CriticOutput, Evidence
+from arbee.agents.schemas import CriticOutput, Evidence
 from pydantic import BaseModel
 
 
@@ -121,6 +121,31 @@ You must respond with valid JSON in exactly this format:
         """Return CriticOutput schema"""
         return CriticOutput
 
+    def get_human_prompt(self) -> str:
+        """Human prompt for evidence critique"""
+        return """Analyze the following evidence for quality, balance, and completeness.
+
+Evidence Items ({evidence_count} total):
+{evidence_items}
+
+Planner Output (Original Research Plan):
+{planner_output}
+
+Market Question: {market_question}
+
+CRITICAL: You MUST provide your complete chain-of-thought analysis in the "analysis_process" field FIRST,
+then fill in all other required output fields based on your analysis.
+
+Your analysis_process should include:
+Step 1: Evidence Inventory - Count and categorize all evidence
+Step 2: Source Independence Check - Group by source/domain
+Step 3: Correlation Detection - Identify similar/overlapping items
+Step 4: Coverage Gap Analysis - Compare to original subclaims
+Step 5: Quality Assessment - Evaluate credibility and bias
+Step 6: Improvement Recommendations - Suggest follow-up searches
+
+Think step-by-step before making judgments."""
+
     async def critique(
         self,
         evidence_items: List[Evidence],
@@ -156,6 +181,7 @@ You must respond with valid JSON in exactly this format:
 
         input_data = {
             "evidence_items": evidence_items,
+            "evidence_count": len(evidence_items),
             "planner_output": planner_output,
             "market_question": market_question
         }
@@ -170,3 +196,53 @@ You must respond with valid JSON in exactly this format:
         )
 
         return result
+
+    def validate_output(self, output: BaseModel) -> tuple[bool, Optional[str]]:
+        """
+        Validate CriticOutput for systematic analysis process
+
+        Checks:
+        1. Correlation clusters have at least 2 evidence items
+        2. Analysis process is present and detailed
+        3. Output fields are properly structured
+        """
+        # Base validation
+        is_valid, feedback = super().validate_output(output)
+        if not is_valid:
+            return is_valid, feedback
+
+        # Type check
+        if not isinstance(output, CriticOutput):
+            return False, f"Expected CriticOutput, got {type(output)}"
+
+        issues = []
+
+        # Check correlation warning clusters
+        for i, warning in enumerate(output.correlation_warnings):
+            if not warning.cluster or len(warning.cluster) < 2:
+                issues.append(
+                    f"Correlation warning {i+1} has cluster with <2 items: {warning.cluster}. "
+                    f"Clusters should contain at least 2 correlated evidence IDs."
+                )
+
+        # Check duplicate clusters
+        for i, cluster in enumerate(output.duplicate_clusters):
+            if len(cluster) < 2:
+                issues.append(
+                    f"Duplicate cluster {i+1} has <2 items: {cluster}. "
+                    f"Clusters should contain at least 2 duplicate evidence IDs."
+                )
+
+        # Check analysis process (if field exists)
+        if hasattr(output, 'analysis_process'):
+            if not output.analysis_process or len(output.analysis_process) < 100:
+                issues.append(
+                    "analysis_process is too short or empty - must provide detailed step-by-step critical analysis"
+                )
+
+        if issues:
+            feedback_msg = "Critique validation issues:\n" + "\n".join(issues)
+            return False, feedback_msg
+
+        # All validation passed
+        return True, None

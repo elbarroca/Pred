@@ -5,7 +5,7 @@ Gamma API (events/markets) + CLOB API (orderbooks/prices)
 import json
 import logging
 import httpx
-from typing import Dict, List
+from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from py_clob_client.client import ClobClient
 from config import settings
@@ -211,15 +211,19 @@ class PolymarketClient:
 
         return formatted
 
-    async def get_markets(self, limit=50, min_liquidity=100, max_spread=0.98, **filters) -> List[Dict]:
-        """Get markets enriched with orderbooks"""
+    async def get_markets(self, limit=200, min_liquidity=100, max_spread=0.98, **filters) -> List[Dict]:
+        """Get markets enriched with orderbooks, sorted by volume"""
         # Set default date filters
         if 'end_date_min' not in filters:
             filters['end_date_min'] = datetime.now().strftime('%Y-%m-%d')
         if 'end_date_max' not in filters:
             filters['end_date_max'] = (datetime.now() + timedelta(days=365)).strftime('%Y-%m-%d')
 
-        markets = await self.gamma.get_markets(active=True, limit=100, **filters)
+        # Fetch more markets than needed to allow for filtering
+        markets = await self.gamma.get_markets(active=True, limit=limit * 3, **filters)
+
+        # Sort by volume descending to get highest volume markets first
+        markets.sort(key=lambda m: float(m.get('volumeNum', m.get('volume', 0)) or 0), reverse=True)
 
         enriched = []
         for market in markets[:limit * 10]:
@@ -354,7 +358,6 @@ class PolymarketClient:
             return None
 
     # ========== Utilities ==========
-
     def _fmt_vol(self, volume: float) -> str:
         """Format volume as readable string"""
         if volume >= 1_000_000:

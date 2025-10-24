@@ -2,9 +2,9 @@
 Planner Agent - First agent in POLYSEER workflow
 Breaks down market questions into structured research tasks
 """
-from typing import Type, Dict, Any
+from typing import Type, Dict, Any, Optional
 from arbee.agents.base import BaseAgent
-from arbee.models.schemas import PlannerOutput
+from arbee.agents.schemas import PlannerOutput
 from pydantic import BaseModel
 
 
@@ -75,18 +75,20 @@ Your role is to break down prediction market questions into structured research 
 Remember: Your job is to set up the research, not to answer the question yet.
 The Researcher agents will gather evidence based on your plan.
 
-## CHAIN-OF-THOUGHT REASONING REQUIRED
+## CHAIN-OF-THOUGHT REASONING & MEMORY MGMT REQUIRED
 
-Before generating your final output, you MUST think step-by-step:
+Before generating your final output, you MUST think step-by-step and track your reasoning:
 
 **Step 1: Initial Assessment**
 - What is this question really asking?
 - What is my immediate intuition about the probability?
+- How does this relate to previous market questions I've analyzed?
 
 **Step 2: Reference Class Analysis**
 - What historical precedents or base rates apply?
 - What similar events can I learn from?
 - What does the outside view suggest?
+- Consult my memory of similar cases for priors
 
 **Step 3: Key Factors Identification**
 - What are the 3-5 most critical variables?
@@ -97,18 +99,34 @@ Before generating your final output, you MUST think step-by-step:
 - What specific claims would support YES? (pro)
 - What specific claims would support NO? (con)
 - Am I being balanced? Do I have roughly equal pro/con?
+- How do these connect to the key factors identified?
 
 **Step 5: Search Strategy**
 - What queries would find the strongest PRO evidence?
 - What queries would find the strongest CON evidence?
 - What neutral/contextual queries give us background?
+- What search strategies have worked for similar topics in the past?
 
-**Step 6: Prior Estimation**
-- Based on base rates and key factors, what's a reasonable p0?
-- Why this number and not higher/lower?
-- What's my confidence in this prior?
+**Step 6: Memory Integration & Validation**
+- How does my plan build on previous agent memory?
+- What should be stored in working memory for future agents?
+- What might be sensitive and need to be flagged for erasure?
 
 Include your complete reasoning trace in the "reasoning_trace" field.
+
+## CRITICAL INSTRUCTIONS FOR RESPONSE FORMAT
+
+1. **FIRST**: Write your complete step-by-step reasoning in the "reasoning_trace" field
+2. **THEN**: Fill in all other required fields based on your reasoning
+3. Your reasoning_trace MUST follow this structure:
+   - Step 1: Initial Assessment - What is this question asking? What's my intuition?
+   - Step 2: Reference Class Analysis - What base rates apply?
+   - Step 3: Key Factors Identification - What are the critical variables?
+   - Step 4: Subclaim Generation - What specific claims support YES/NO?
+   - Step 5: Search Strategy - What queries will find the best evidence?
+   - Step 6: Memory Integration - How does this connect to prior knowledge and what should be remembered?
+
+DO NOT skip the reasoning_trace. It is REQUIRED for auditability and chain-of-thought reasoning.
 
 You must respond with valid JSON in exactly this format:
 {{
@@ -247,3 +265,69 @@ Market Slug: {market_slug or market_question.lower().replace(' ', '-')[:50]}"""
         )
 
         return result
+
+    def validate_output(self, output: BaseModel) -> tuple[bool, Optional[str]]:
+        """
+        Validate PlannerOutput for balanced subclaims and complete search seeds
+
+        Checks:
+        1. Prior is in reasonable range [0.01, 0.99]
+        2. Subclaims are balanced (roughly equal pro/con)
+        3. Search seeds are non-empty for all directions
+        4. Reasoning trace is present
+        """
+        # Base validation
+        is_valid, feedback = super().validate_output(output)
+        if not is_valid:
+            return is_valid, feedback
+
+        # Type check
+        if not isinstance(output, PlannerOutput):
+            return False, f"Expected PlannerOutput, got {type(output)}"
+
+        issues = []
+
+        # Check prior range
+        if not (0.01 <= output.p0_prior <= 0.99):
+            issues.append(f"p0_prior ({output.p0_prior:.2%}) should be in range [1%, 99%]")
+
+        # Check subclaims balance
+        pro_count = sum(1 for sc in output.subclaims if sc.direction == "pro")
+        con_count = sum(1 for sc in output.subclaims if sc.direction == "con")
+
+        if pro_count == 0:
+            issues.append("No PRO subclaims - need balanced pro/con subclaims")
+        elif con_count == 0:
+            issues.append("No CON subclaims - need balanced pro/con subclaims")
+        else:
+            ratio = pro_count / con_count if con_count > 0 else float('inf')
+            # Allow imbalance up to 2:1 ratio
+            if ratio > 2.0 or ratio < 0.5:
+                issues.append(
+                    f"Subclaims are imbalanced: {pro_count} PRO vs {con_count} CON "
+                    f"(ratio {ratio:.2f}). Aim for roughly equal pro/con split."
+                )
+
+        # Check search seeds
+        if not output.search_seeds.pro or len(output.search_seeds.pro) == 0:
+            issues.append("PRO search seeds are empty - need queries to find supporting evidence")
+
+        if not output.search_seeds.con or len(output.search_seeds.con) == 0:
+            issues.append("CON search seeds are empty - need queries to find contradicting evidence")
+
+        if not output.search_seeds.general or len(output.search_seeds.general) == 0:
+            issues.append("GENERAL search seeds are empty - need contextual queries")
+
+        # Check reasoning trace (if field exists)
+        if hasattr(output, 'reasoning_trace'):
+            if not output.reasoning_trace or len(output.reasoning_trace) < 100:
+                issues.append(
+                    "reasoning_trace is too short or empty - must provide detailed step-by-step reasoning"
+                )
+
+        if issues:
+            feedback_msg = "Planning validation issues:\n" + "\n".join(issues)
+            return False, feedback_msg
+
+        # All validation passed
+        return True, None

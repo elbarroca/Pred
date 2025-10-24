@@ -4,7 +4,7 @@ Identifies mispricing opportunities using Kelly Criterion
 """
 from typing import Type, List, Dict, Any, Optional
 from arbee.agents.base import BaseAgent
-from arbee.models.schemas import ArbitrageOpportunity, PlatformSide
+from arbee.agents.schemas import ArbitrageOpportunity, PlatformSide
 from arbee.utils.bayesian import KellyCalculator
 from arbee.api_clients.polymarket import PolymarketClient
 from arbee.api_clients.kalshi import KalshiClient

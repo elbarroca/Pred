@@ -2,13 +2,13 @@
 Pydantic schemas for POLYSEER agent outputs
 All schemas follow the JSON structures defined in CLAUDE.MD
 """
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Literal, Optional, Dict, Any
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+from typing import List, Literal, Optional, Dict, Any, TypedDict
 from datetime import datetime, date
 
 
 # ============================================================================
-# PLANNER AGENT SCHEMAS
+# MEMORY MANAGEMENT SCHEMAS
 # ============================================================================
 
 class Subclaim(BaseModel):
@@ -236,6 +236,8 @@ class TopDriver(BaseModel):
 
 class ReporterOutput(BaseModel):
     """Final output from Reporter Agent"""
+    model_config = ConfigDict(extra='forbid')  # This sets additionalProperties to false
+    
     market_question: str
     p_bayesian: float = Field(..., ge=0.0, le=1.0)
     confidence_interval: List[float] = Field(
@@ -255,6 +257,7 @@ class ReporterOutput(BaseModel):
     )
     full_json: Dict[str, Any] = Field(..., description="Complete data package")
     disclaimer: str = Field(default="NOT FINANCIAL ADVICE")
+    disclaimer: str = Field(default="NOT FINANCIAL ADVICE")
 
 
 # ============================================================================
@@ -263,8 +266,19 @@ class ReporterOutput(BaseModel):
 
 from typing import TypedDict
 
+class MemoryEntry(BaseModel):
+    """Entry in the agent memory/working memory for reasoning and thought tracking"""
+    agent_name: str
+    timestamp: datetime
+    thought_process: str  # Chain-of-thought reasoning
+    action_taken: str  # What the agent decided to do
+    result: str  # What happened as a result
+    context_snapshot: Dict[str, Any]  # Relevant context at time of action
+    is_sensitive: bool = False  # Whether this should be erased for privacy
+
+
 class WorkflowState(TypedDict, total=False):
-    """State passed through LangGraph workflow"""
+    """State passed through LangGraph workflow with enhanced memory management"""
     # Input (required)
     market_question: str
     market_url: str
@@ -280,6 +294,12 @@ class WorkflowState(TypedDict, total=False):
     timestamp: str
     context: Dict[str, Any]
 
+    # Memory and reasoning tracking
+    working_memory: List[Dict[str, Any]]  # For temporary reasoning/working memory
+    agent_memory: List[MemoryEntry]  # For tracking agent reasoning chains
+    reasoning_trace: List[str]  # Step-by-step reasoning from agents
+    memory_trace: List[str]  # Trace of memory operations (read/write/erase)
+
     # Intermediate values
     p0_prior: float
     search_seeds: Any
@@ -294,3 +314,7 @@ class WorkflowState(TypedDict, total=False):
     analyst_output: AnalystOutput
     arbitrage_output: List[Any]
     reporter_output: ReporterOutput
+
+    # Memory management flags
+    should_erase_sensitive: bool
+    erased_data_count: int

@@ -2,16 +2,15 @@
 Researcher Agent - Evidence gathering with Valyu AI integration
 Executes parallel PRO/CON research based on Planner's search seeds
 """
-from typing import Type, Dict, Any, List, Literal
+from typing import Type, Dict, Any, List, Literal, Optional
 import asyncio
 import logging
 from datetime import datetime, timedelta
 
 from arbee.agents.base import BaseAgent
-from arbee.models.schemas import ResearcherOutput, Evidence
+from arbee.agents.schemas import ResearcherOutput, Evidence
 from arbee.api_clients.valyu import ValyuResearchClient
 from pydantic import BaseModel
-
 
 class ResearcherAgent(BaseAgent):
     """
@@ -145,6 +144,7 @@ class ResearcherAgent(BaseAgent):
 ## Example Evidence Extraction
 
 **Good:**
+```json
 {
   "subclaim_id": "sc1_research",
   "title": "ABC/WaPo Poll: Trump leads Harris by 3 points in Arizona",
@@ -159,12 +159,15 @@ class ResearcherAgent(BaseAgent):
   "estimated_LLR": 0.6,
   "extraction_notes": "High-quality poll with transparent methodology. LLR=0.6 because: B-grade source, recent, verifiable, but within margin of error."
 }
+```
 
 **Bad (too vague):**
+```json
 {
   "claim_summary": "Polls show Trump doing well in swing states",
   "estimated_LLR": 1.5  // Wrong: too high for vague claim
 }
+```
 
 ## Important Guidelines
 
@@ -186,40 +189,27 @@ Quality over quantity: 10 high-quality sources > 100 weak ones.
 
     def get_human_prompt(self) -> str:
         """Human prompt for evidence extraction"""
-        return """Analyze the provided search results and extract structured evidence items.
-
-Search Results: {search_results}
-Direction: {direction}
-Max Items: {max_items}
+        return """Search Results: {search_results}
+Direction: {{direction}}
+Max Items: {{max_items}}
 
 Extract up to {max_items} high-quality evidence items that are relevant to the market question. Each evidence item should be a specific, falsifiable claim with proper attribution.
 
-Return your response as a valid JSON object with this exact structure:
-{{
-    "evidence_items": [
-        {{
-            "subclaim_id": "string (use 'general' if no specific subclaim matches)",
-            "title": "Brief descriptive title",
-            "url": "Source URL",
-            "published_date": "YYYY-MM-DD format",
-            "source_type": "primary|high_quality_secondary|secondary|weak",
-            "claim_summary": "Specific claim extracted from the source",
-            "support": "pro|con|neutral",
-            "verifiability_score": 0.0-1.0,
-            "independence_score": 0.0-1.0,
-            "recency_score": 0.0-1.0,
-            "estimated_LLR": number,
-            "extraction_notes": "Explanation of LLR and scoring"
-        }}
-    ]
-}}
+Your response must be valid JSON with an evidence_items array. Required fields are:
+- subclaim_id (string identifier)
+- title (article/source title)
+- url (source URL)
+- published_date (YYYY-MM-DD format)
+- source_type (primary, high_quality_secondary, secondary, or weak)
+- claim_summary (specific claim, max 500 chars)
+- support (pro, con, or neutral)
+- verifiability_score (0.0 to 1.0)
+- independence_score (0.0 to 1.0)
+- recency_score (0.0 to 1.0)
+- estimated_LLR (log-likelihood ratio, calibrated to source quality)
+- extraction_notes (reasoning for LLR assignment)
 
-Focus on:
-- Recent, verifiable sources
-- Specific claims (not broad summaries)
-- Proper LLR calibration based on source quality
-- Balanced coverage if multiple perspectives exist
-- Clear attribution with URLs and dates"""
+Focus on recent verifiable sources with specific claims (not broad summaries), proper LLR calibration based on source quality, balanced coverage, and clear attribution with URLs and dates."""
 
     async def research(
         self,
@@ -353,22 +343,102 @@ Focus on:
             self.logger.warning("No search results to extract from")
             return []
 
+        # LOG RESEARCH CONTENT - Show what documents we found
+        self.logger.info(f"📚 SEARCH RESULTS PREVIEW ({len(search_results)} items):")
+        for i, item in enumerate(search_results[:5], 1):
+            self.logger.info(f"  [{i}] {item.get('title', 'N/A')[:80]}")
+            self.logger.info(f"      URL: {item.get('url', 'N/A')[:100]}")
+            snippet = item.get('snippet', '')
+            if snippet:
+                self.logger.info(f"      Snippet: {snippet[:150]}...")
+
         # Prepare input for LLM
         input_data = {
             "search_results": search_results[:50],  # Limit context size
-            "direction": self.direction,
-            "max_items": max_items
+            "{{direction}}": self.direction,
+            "{{max_items}}": max_items
         }
 
         # Invoke LLM to extract evidence
+        # NOTE: Temporarily disable reflection due to template variable parsing issues
+        # The system prompt contains field descriptions that LangChain interprets as variables
         try:
-            result = await self.invoke(input_data)
-            self.logger.info(f"Extracted {len(result.evidence_items)} evidence items")
+            result = await self.invoke(input_data, enable_reflection=False)
+
+            # LOG EXTRACTION RESULTS - Show what evidence was extracted
+            self.logger.info(f"✅ EVIDENCE EXTRACTION COMPLETE ({len(result.evidence_items)} items):")
+            for i, ev in enumerate(result.evidence_items[:5], 1):
+                self.logger.info(f"  [{i}] {ev.title[:60]}")
+                self.logger.info(f"      Support: {ev.support} | LLR: {ev.estimated_LLR:+.2f}")
+                self.logger.info(
+                    f"      Scores: V={ev.verifiability_score:.2f}, "
+                    f"I={ev.independence_score:.2f}, R={ev.recency_score:.2f}"
+                )
+
             return result.evidence_items
 
         except Exception as e:
             self.logger.error(f"Evidence extraction failed: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return []
+
+    def validate_output(self, output: BaseModel) -> tuple[bool, Optional[str]]:
+        """
+        Validate ResearcherOutput with LLR calibration checks
+
+        Checks:
+        1. At least some evidence items extracted
+        2. LLRs are within calibrated ranges based on source type
+        3. All required scores present and in range [0, 1]
+        4. Published dates are valid
+        """
+        # Base validation
+        is_valid, feedback = super().validate_output(output)
+        if not is_valid:
+            return is_valid, feedback
+
+        # Type check
+        if not isinstance(output, ResearcherOutput):
+            return False, f"Expected ResearcherOutput, got {type(output)}"
+
+        # Check if any evidence was extracted
+        if not output.evidence_items or len(output.evidence_items) == 0:
+            return False, "No evidence items extracted. Please try to find at least some relevant sources."
+
+        # Validate each evidence item
+        issues = []
+        for i, evidence in enumerate(output.evidence_items):
+            # LLR calibration check
+            source_type = evidence.source_type
+            llr = evidence.estimated_LLR
+
+            if source_type == "primary" and abs(llr) > 3.0:
+                issues.append(f"Evidence {i+1} ('{evidence.title[:50]}...'): Primary source LLR should be ±1-3, got {llr:.2f}")
+            elif source_type == "high_quality_secondary" and abs(llr) > 1.0:
+                issues.append(f"Evidence {i+1}: High-quality secondary LLR should be ±0.3-1.0, got {llr:.2f}")
+            elif source_type == "secondary" and abs(llr) > 1.0:
+                issues.append(f"Evidence {i+1}: Secondary source LLR should be ±0.1-0.5, got {llr:.2f}")
+            elif source_type == "weak" and abs(llr) > 0.2:
+                issues.append(f"Evidence {i+1}: Weak source LLR should be ±0.01-0.2, got {llr:.2f}")
+
+            # Score range checks
+            for score_name, score_value in [
+                ("verifiability_score", evidence.verifiability_score),
+                ("independence_score", evidence.independence_score),
+                ("recency_score", evidence.recency_score)
+            ]:
+                if not (0.0 <= score_value <= 1.0):
+                    issues.append(f"Evidence {i+1}: {score_name} must be in [0, 1], got {score_value}")
+
+        if issues:
+            feedback_msg = "LLR calibration issues found:\n" + "\n".join(issues[:5])  # Show first 5
+            if len(issues) > 5:
+                feedback_msg += f"\n... and {len(issues)-5} more issues"
+            return False, feedback_msg
+
+        # All validation passed
+        return True, None
 
 
 # Convenience functions for parallel execution
