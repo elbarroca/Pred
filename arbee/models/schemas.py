@@ -3,7 +3,7 @@ Pydantic schemas for POLYSEER agent outputs
 All schemas follow the JSON structures defined in CLAUDE.MD
 """
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Literal, Optional, Dict, Any
+from typing import List, Literal, Optional, Dict, Any, Annotated
 from datetime import datetime, date
 
 
@@ -74,6 +74,24 @@ class ResearcherOutput(BaseModel):
     evidence_items: List[Evidence] = Field(..., max_length=30)
     total_pro_count: int = Field(default=0)
     total_con_count: int = Field(default=0)
+    total_pro_llr: float = Field(
+        default=0.0,
+        description="Sum of positive (pro) LLR contributions"
+    )
+    total_con_llr: float = Field(
+        default=0.0,
+        description="Sum of absolute negative (con) LLR contributions"
+    )
+    net_llr: float = Field(
+        default=0.0,
+        description="Signed sum of all LLR contributions"
+    )
+    context_alignment_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Share of directional evidence aligned with its subclaim goal"
+    )
     research_timestamp: datetime = Field(default_factory=datetime.utcnow)
     search_strategy: str = Field(default="", description="Explanation of research approach taken")
 
@@ -262,6 +280,18 @@ class ReporterOutput(BaseModel):
 # ============================================================================
 
 from typing import TypedDict
+from langgraph.graph.message import AnyMessage, add_messages
+
+
+def append_traces(
+    state_traces: Optional[List[Dict[str, Any]]],
+    new_traces: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """
+    Reducer for accumulating agent trace logs in WorkflowState.
+    """
+    existing = state_traces or []
+    return [*existing, *new_traces]
 
 class WorkflowState(TypedDict, total=False):
     """State passed through LangGraph workflow"""
@@ -279,6 +309,8 @@ class WorkflowState(TypedDict, total=False):
     workflow_id: str
     timestamp: str
     context: Dict[str, Any]
+    messages: Annotated[List[AnyMessage], add_messages]
+    agent_traces: Annotated[List[Dict[str, Any]], append_traces]
 
     # Intermediate values
     p0_prior: float

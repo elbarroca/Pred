@@ -157,3 +157,5 @@ class TestDataIntegrity:
         except Exception as e:
             assert "foreign key" in str(e).lower() or "constraint" in str(e).lower()
 
+
+

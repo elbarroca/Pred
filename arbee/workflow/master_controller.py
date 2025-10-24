@@ -11,9 +11,9 @@ import uuid
 
 from arbee.api_clients.polymarket import PolymarketClient
 from arbee.api_clients.kalshi import KalshiClient
-from arbee.agents.arbitrage import ArbitrageDetector
+from arbee.agents.autonomous_arbitrage import AutonomousArbitrageAgent
 from arbee.workflow.market_selector import MarketSelector, fetch_and_score_markets
-from arbee.workflow.graph import run_workflow
+from arbee.workflow.autonomous_graph import run_autonomous_workflow
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class POLYSEERController:
         """Initialize controller with API clients"""
         self.polymarket = PolymarketClient()
         self.kalshi = KalshiClient()
-        self.arbitrage_detector = ArbitrageDetector()
+        self.arbitrage_detector = AutonomousArbitrageAgent()
         self.market_selector = MarketSelector()
 
     async def run_arbitrage_scan(
@@ -185,7 +185,7 @@ class POLYSEERController:
         # Run the full LangGraph workflow
         logger.info("Running complete POLYSEER workflow...")
         try:
-            workflow_result = await run_workflow(
+            workflow_result = await run_autonomous_workflow(
                 market_question=market_question,
                 market_url=market_url,
                 market_slug=market_slug,

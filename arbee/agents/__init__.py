@@ -1,19 +1,19 @@
 """POLYSEER Agent Modules"""
-from arbee.agents.base import BaseAgent
-from arbee.agents.planner import PlannerAgent
-from arbee.agents.researcher import ResearcherAgent, run_parallel_research
-from arbee.agents.critic import CriticAgent
-from arbee.agents.analyst import AnalystAgent
-from arbee.agents.arbitrage import ArbitrageDetector
-from arbee.agents.reporter import ReporterAgent
+from arbee.agents.autonomous_base import AutonomousReActAgent
+from arbee.agents.autonomous_planner import AutonomousPlannerAgent
+from arbee.agents.autonomous_researcher import AutonomousResearcherAgent
+from arbee.agents.autonomous_critic import AutonomousCriticAgent
+from arbee.agents.autonomous_analyst import AutonomousAnalystAgent
+from arbee.agents.autonomous_arbitrage import AutonomousArbitrageAgent
+from arbee.agents.autonomous_reporter import AutonomousReporterAgent
 
 __all__ = [
-    'BaseAgent',
-    'PlannerAgent',
-    'ResearcherAgent',
+    'AutonomousReActAgent',
+    'AutonomousPlannerAgent',
+    'AutonomousResearcherAgent',
     'run_parallel_research',
-    'CriticAgent',
-    'AnalystAgent',
-    'ArbitrageDetector',
-    'ReporterAgent'
+    'AutonomousCriticAgent',
+    'AutonomousAnalystAgent',
+    'AutonomousArbitrageAgent',
+    'AutonomousReporterAgent',
 ]

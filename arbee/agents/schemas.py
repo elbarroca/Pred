@@ -74,6 +74,24 @@ class ResearcherOutput(BaseModel):
     evidence_items: List[Evidence] = Field(..., max_length=30)
     total_pro_count: int = Field(default=0)
     total_con_count: int = Field(default=0)
+    total_pro_llr: float = Field(
+        default=0.0,
+        description="Sum of positive (pro) LLR contributions"
+    )
+    total_con_llr: float = Field(
+        default=0.0,
+        description="Sum of absolute negative (con) LLR contributions"
+    )
+    net_llr: float = Field(
+        default=0.0,
+        description="Signed sum of all LLR contributions"
+    )
+    context_alignment_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Share of directional evidence aligned with its subclaim goal"
+    )
     research_timestamp: datetime = Field(default_factory=datetime.utcnow)
     search_strategy: str = Field(default="", description="Explanation of research approach taken")
 
