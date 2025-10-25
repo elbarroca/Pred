@@ -8,7 +8,156 @@ from datetime import datetime, date
 
 
 # ============================================================================
-# PLANNER AGENT SCHEMAS
+# SIMPLIFIED SCHEMAS (NEW ARCHITECTURE)
+# ============================================================================
+
+class SubjectProfile(BaseModel):
+    """
+    Profile of the subject being researched (person/team/event).
+    Built during research PHASE 1: PROFILING
+    """
+    entity_name: str = Field(..., description="Name of the subject (e.g., 'Diplo')")
+    entity_type: Literal["person", "team", "event", "organization"] = Field(
+        ...,
+        description="Type of entity"
+    )
+    key_facts: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Extracted facts (e.g., {'age': '46', 'profession': 'DJ/producer'})"
+    )
+    baseline_capabilities: Optional[str] = Field(
+        None,
+        description="Assessment of baseline ability (e.g., 'Recreational runner, no competitive history')"
+    )
+
+
+class EvidenceItem(BaseModel):
+    """
+    Simplified evidence model - replaces complex LLR calibration with 1-10 relevance scoring.
+    Focuses on: How meaningful is this information for predicting the outcome?
+    """
+    source_url: str = Field(..., description="URL to source")
+    published_date: Optional[str] = Field(None, description="Publication date YYYY-MM-DD or None")
+    key_fact: str = Field(..., description="One sentence summary of the factual claim")
+    relevance_score: int = Field(
+        ...,
+        ge=1,
+        le=10,
+        description="How useful is this for predicting outcome? (9-10: direct answer, 7-8: strong proxy, 5-6: context, 3-4: weak signal, 1-2: barely relevant)"
+    )
+    support_direction: Literal["YES", "NO", "NEUTRAL"] = Field(
+        ...,
+        description="Does this make the market outcome more likely (YES), less likely (NO), or neither (NEUTRAL)?"
+    )
+    is_primary: bool = Field(
+        ...,
+        description="True = direct measurement/race result, False = news article/secondary source"
+    )
+    extraction_reasoning: str = Field(
+        ...,
+        description="WHY this score and direction were chosen"
+    )
+
+
+class ResearchPhase(BaseModel):
+    """
+    Tracks research progress through 3 phases with confidence-based termination.
+    Replaces iteration counting with question answering.
+    """
+    phase: Literal["profiling", "benchmarking", "evidence_gathering", "complete"] = Field(
+        default="profiling",
+        description="Current research phase"
+    )
+    questions_answered: List[str] = Field(
+        default_factory=list,
+        description="Research questions that have been answered"
+    )
+    questions_remaining: List[str] = Field(
+        default_factory=list,
+        description="Research questions still to be answered"
+    )
+    confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence in having enough information (stop at 0.7+)"
+    )
+
+
+class SimplifiedPlannerOutput(BaseModel):
+    """
+    Simplified planner output - generates QUESTIONS not search seeds.
+    Focus on: What do we need to know to estimate this probability?
+    """
+    market_slug: str
+    market_question: str
+    market_type: Literal["sports", "politics", "finance", "entertainment", "other"]
+    subject_to_profile: SubjectProfile
+    core_research_questions: List[str] = Field(
+        ...,
+        min_length=3,
+        max_length=6,
+        description="Key questions to answer (not search queries)"
+    )
+    baseline_prior: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Starting probability (default 0.5 unless obvious)"
+    )
+    prior_reasoning: str = Field(..., description="Why this prior makes sense")
+
+
+class SimplifiedResearcherOutput(BaseModel):
+    """
+    Simplified researcher output - tracks adaptive search through phases.
+    """
+    subject_profile: Optional[SubjectProfile] = None
+    benchmark_evidence: List[EvidenceItem] = Field(
+        default_factory=list,
+        description="Baseline/benchmark data (e.g., 'average 5k time for 46yo')"
+    )
+    specific_evidence: List[EvidenceItem] = Field(
+        default_factory=list,
+        description="Subject-specific evidence (e.g., 'Diplo's actual race times')"
+    )
+    research_phase: ResearchPhase
+    search_queries_used: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="Log of queries with reasoning: [{'query': '...', 'reasoning': '...'}]"
+    )
+    total_searches: int = Field(default=0)
+
+
+class SimplifiedAnalystOutput(BaseModel):
+    """
+    Simplified analyst output - weighted scoring instead of complex LLR aggregation.
+    """
+    probability: float = Field(..., ge=0.0, le=1.0, description="Final probability estimate")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence in estimate (0-1)")
+    yes_evidence_weight: float = Field(default=0.0, description="Total weight of YES evidence")
+    no_evidence_weight: float = Field(default=0.0, description="Total weight of NO evidence")
+    neutral_evidence_weight: float = Field(default=0.0, description="Total weight of NEUTRAL evidence")
+    total_evidence_count: int = Field(default=0, description="Total number of evidence items")
+    primary_evidence_count: int = Field(default=0, description="Number of primary sources")
+    baseline_prior: float = Field(default=0.5, ge=0.0, le=1.0, description="Starting probability")
+    reasoning: str = Field(..., description="Human-readable explanation of probability")
+    top_yes_evidence: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Top YES evidence items with weights"
+    )
+    top_no_evidence: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Top NO evidence items with weights"
+    )
+    sensitivity_range: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Probability range (low/high) for sensitivity analysis"
+    )
+
+
+# ============================================================================
+# ORIGINAL PLANNER AGENT SCHEMAS (LEGACY - TO BE DEPRECATED)
 # ============================================================================
 
 class Subclaim(BaseModel):
