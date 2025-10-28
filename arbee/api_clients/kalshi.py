@@ -1,362 +1,368 @@
 """
-Kalshi API Client
-Supports both public (no auth) and authenticated endpoints
+kalshi_market_extractor.py
+
+Async utilities to fetch and enrich Kalshi prediction-market data.
+
+- KalshiClient: minimal API client (events, markets, orderbooks, prices)
+- KalshiMarketService: high-level enrichment (filters, liquidity, spreads)
 """
-import httpx
-import hashlib
-import time
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-from datetime import datetime
-from config import settings
+from __future__ import annotations
+
+import asyncio
+import base64
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+import httpx  # type: ignore
+
+logger = logging.getLogger(__name__)
+
+try:
+    from config import settings  # type: ignore
+except Exception:  # pragma: no cover
+    settings = None
 
 
+# =========================
+# Low-level Kalshi API
+# =========================
 class KalshiClient:
-    """Client for Kalshi prediction market API"""
+    """Lightweight client for the Kalshi trading API (read-only).
 
-    def __init__(self):
-        self.base_url = settings.KALSHI_API_URL.rstrip('/')  # Remove trailing slash
-        self.api_key_id = settings.KALSHI_API_KEY_ID
-        self.api_key = settings.KALSHI_API_KEY  # API key for authentication
-        self.private_key_path = settings.KALSHI_PRIVATE_KEY_PATH
-        self.private_key = None
+    Auth:
+      - If KALSHI_API_KEY is set -> Bearer
+      - Else if KALSHI_API_KEY_ID + PRIVATE_KEY -> RSA signature headers
+      - Else -> unauthenticated (public data)
 
-        # Load private key if available (for authenticated requests)
-        if self.private_key_path and Path(self.private_key_path).exists():
+    Only public reads (no trading). Suitable for enrichment pipelines.
+    """
+
+    def __init__(self) -> None:
+        base = getattr(settings, "KALSHI_API_URL", "https://trading-api.kalshi.com")
+        self.base_url = base.rstrip("/")
+        self.api_key_id: Optional[str] = getattr(settings, "KALSHI_API_KEY_ID", None)
+        self.api_key: Optional[str] = getattr(settings, "KALSHI_API_KEY", None)
+        self.private_key_path: Optional[str] = getattr(settings, "KALSHI_PRIVATE_KEY_PATH", None)
+        self._privkey = None
+        if self.private_key_path:
             self._load_private_key()
+        logger.info("KalshiClient ready")  # 1/2 module log lines
 
-    def _load_private_key(self):
-        """Load RSA private key for request signing"""
+    # --- auth helpers ---
+    def _load_private_key(self) -> None:
+        """Load RSA private key if present (optional)."""
         try:
             from cryptography.hazmat.primitives import serialization
             from cryptography.hazmat.backends import default_backend
 
-            with open(self.private_key_path, 'rb') as f:
-                self.private_key = serialization.load_pem_private_key(
-                    f.read(),
-                    password=None,
-                    backend=default_backend()
+            with open(self.private_key_path, "rb") as f:  # type: ignore[arg-type]
+                self._privkey = serialization.load_pem_private_key(
+                    f.read(), password=None, backend=default_backend()
                 )
-        except Exception as e:
-            print(f"Warning: Could not load Kalshi private key: {e}")
+        except Exception as exc:  # pragma: no cover
+            logger.debug(f"Kalshi private key not loaded: {exc}")
 
-    def _sign_request(self, method: str, path: str, timestamp: int) -> Optional[str]:
-        """
-        Generate RSA-PSS signature for authenticated requests
-
-        Args:
-            method: HTTP method (GET, POST, etc.)
-            path: Request path (without query params)
-            timestamp: Request timestamp in milliseconds
-
-        Returns:
-            Base64-encoded signature or None
-        """
-        if not self.private_key:
+    def _sign_request(self, method: str, path: str, ts_ms: int) -> Optional[str]:
+        """Return base64 RSA-PSS signature or None if unavailable."""
+        if not self._privkey:
             return None
-
         try:
             from cryptography.hazmat.primitives import hashes
             from cryptography.hazmat.primitives.asymmetric import padding
-            import base64
 
-            # Signature message: timestamp + method + path
-            message = f"{timestamp}{method}{path}"
-
-            signature = self.private_key.sign(
-                message.encode('utf-8'),
-                padding.PSS(
-                    mgf=padding.MGF1(hashes.SHA256()),
-                    salt_length=padding.PSS.MAX_LENGTH
-                ),
-                hashes.SHA256()
+            msg = f"{ts_ms}{method}{path}".encode()
+            sig = self._privkey.sign(
+                msg,
+                padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                hashes.SHA256(),
             )
-
-            return base64.b64encode(signature).decode('utf-8')
-        except Exception as e:
-            print(f"Error signing request: {e}")
+            return base64.b64encode(sig).decode()
+        except Exception as exc:  # pragma: no cover
+            logger.debug(f"Sign error: {exc}")
             return None
 
-    def _get_auth_headers(self, method: str, path: str) -> Dict[str, str]:
-        """
-        Generate authentication headers for Kalshi API
-
-        Args:
-            method: HTTP method
-            path: Request path (without query string)
-
-        Returns:
-            Dict of headers
-        """
-        headers = {}
-
-        # Try API key authentication first (simpler method)
+    def _auth_headers(self, method: str, path: str) -> Dict[str, str]:
+        """Build auth headers for the given request."""
         if self.api_key:
-            headers['Authorization'] = f'Bearer {self.api_key}'
-        elif self.api_key_id and self.private_key:
-            # Fallback to RSA signature method
-            timestamp = int(time.time() * 1000)
-            signature = self._sign_request(method, path, timestamp)
+            return {"Authorization": f"Bearer {self.api_key}"}
+        if self.api_key_id and self._privkey:
+            ts = int(datetime.utcnow().timestamp() * 1000)
+            sig = self._sign_request(method, path, ts)
+            if sig:
+                return {
+                    "KALSHI-ACCESS-KEY": self.api_key_id,
+                    "KALSHI-ACCESS-TIMESTAMP": str(ts),
+                    "KALSHI-ACCESS-SIGNATURE": sig,
+                }
+        return {}
 
-            if signature:
-                headers.update({
-                    'KALSHI-ACCESS-KEY': self.api_key_id,
-                    'KALSHI-ACCESS-TIMESTAMP': str(timestamp),
-                    'KALSHI-ACCESS-SIGNATURE': signature
-                })
+    # --- HTTP helpers ---
+    async def _get(self, path: str, *, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        url = f"{self.base_url}{path}"
+        headers = self._auth_headers("GET", path)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                r = await client.get(url, params=params, headers=headers)
+                r.raise_for_status()
+                return r.json()
+            except httpx.HTTPError as exc:
+                logger.debug(f"GET {path} failed: {exc}")
+                return None
 
-        return headers
-
+    # --- API methods ---
     async def get_events(
-        self,
-        series_ticker: Optional[str] = None,
-        status: str = "open",
-        limit: int = 100
+        self, *, series_ticker: Optional[str] = None, status: str = "open", limit: int = 100
     ) -> List[Dict[str, Any]]:
-        """
-        Get events from Kalshi
-
-        Args:
-            series_ticker: Filter by series (e.g., "PRES2024")
-            status: Event status ("open", "closed", "settled")
-            limit: Max results
-
-        Returns:
-            List of event dicts
-        """
-        params = {
-            "status": status,
-            "limit": limit
-        }
+        params: Dict[str, Any] = {"status": status, "limit": limit}
         if series_ticker:
             params["series_ticker"] = series_ticker
-
-        async with httpx.AsyncClient() as client:
-            try:
-                # Get auth headers for this request
-                auth_headers = self._get_auth_headers("GET", "/events")
-
-                response = await client.get(
-                    f"{self.base_url}/events",
-                    params=params,
-                    headers=auth_headers,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                data = response.json()
-                return data.get('events', [])
-            except httpx.HTTPError as e:
-                print(f"Error fetching Kalshi events: {e}")
-                return []
+        data = await self._get("/events", params=params) or {}
+        return data.get("events", []) or []
 
     async def get_event(self, event_ticker: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a specific event by ticker
-
-        Args:
-            event_ticker: Event identifier
-
-        Returns:
-            Event dict or None
-        """
-        async with httpx.AsyncClient() as client:
-            try:
-                # Get auth headers for this request
-                auth_headers = self._get_auth_headers("GET", f"/events/{event_ticker}")
-
-                response = await client.get(
-                    f"{self.base_url}/events/{event_ticker}",
-                    headers=auth_headers,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                data = response.json()
-                return data.get('event')
-            except httpx.HTTPError as e:
-                print(f"Error fetching event {event_ticker}: {e}")
-                return None
+        data = await self._get(f"/events/{event_ticker}")
+        return (data or {}).get("event")
 
     async def get_markets(
         self,
+        *,
         event_ticker: Optional[str] = None,
         series_ticker: Optional[str] = None,
         status: str = "open",
-        limit: int = 100
+        limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """
-        Get markets from Kalshi
-
-        Args:
-            event_ticker: Filter by event
-            series_ticker: Filter by series
-            status: Market status
-            limit: Max results
-
-        Returns:
-            List of market dicts
-        """
-        params = {
-            "status": status,
-            "limit": limit
-        }
+        params: Dict[str, Any] = {"status": status, "limit": limit}
         if event_ticker:
             params["event_ticker"] = event_ticker
         if series_ticker:
             params["series_ticker"] = series_ticker
-
-        async with httpx.AsyncClient() as client:
-            try:
-                # Get auth headers for this request
-                auth_headers = self._get_auth_headers("GET", "/markets")
-
-                response = await client.get(
-                    f"{self.base_url}/markets",
-                    params=params,
-                    headers=auth_headers,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                data = response.json()
-                return data.get('markets', [])
-            except httpx.HTTPError as e:
-                print(f"Error fetching Kalshi markets: {e}")
-                return []
+        data = await self._get("/markets", params=params) or {}
+        return data.get("markets", []) or []
 
     async def get_market(self, market_ticker: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a specific market by ticker
-
-        Args:
-            market_ticker: Market identifier
-
-        Returns:
-            Market dict with pricing info
-        """
-        async with httpx.AsyncClient() as client:
-            try:
-                # Get auth headers for this request
-                auth_headers = self._get_auth_headers("GET", f"/markets/{market_ticker}")
-
-                response = await client.get(
-                    f"{self.base_url}/markets/{market_ticker}",
-                    headers=auth_headers,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                data = response.json()
-                return data.get('market')
-            except httpx.HTTPError as e:
-                print(f"Error fetching market {market_ticker}: {e}")
-                return None
+        data = await self._get(f"/markets/{market_ticker}")
+        return (data or {}).get("market")
 
     async def get_orderbook(self, market_ticker: str) -> Optional[Dict[str, Any]]:
-        """
-        Get orderbook for a market
-
-        Args:
-            market_ticker: Market identifier
-
-        Returns:
-            Orderbook dict with bids/asks
-        """
-        async with httpx.AsyncClient() as client:
-            try:
-                # Get auth headers for this request
-                auth_headers = self._get_auth_headers("GET", f"/markets/{market_ticker}/orderbook")
-
-                response = await client.get(
-                    f"{self.base_url}/markets/{market_ticker}/orderbook",
-                    headers=auth_headers,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                data = response.json()
-                return data.get('orderbook')
-            except httpx.HTTPError as e:
-                print(f"Error fetching orderbook for {market_ticker}: {e}")
-                return None
-
-    async def search_markets(self, query: str) -> List[Dict[str, Any]]:
-        """
-        Search for markets matching query
-
-        Args:
-            query: Search text
-
-        Returns:
-            List of matching markets
-        """
-        # Get all open markets and filter
-        markets = await self.get_markets(limit=200)
-        query_lower = query.lower()
-
-        return [
-            m for m in markets
-            if query_lower in m.get('title', '').lower()
-            or query_lower in m.get('subtitle', '').lower()
-        ]
+        data = await self._get(f"/markets/{market_ticker}/orderbook")
+        return (data or {}).get("orderbook")
 
     async def get_market_price(self, market_ticker: str) -> Optional[float]:
-        """
-        Get current implied probability for a market
-
-        Args:
-            market_ticker: Market identifier
-
-        Returns:
-            Implied probability (0.0-1.0) or None
-        """
-        market = await self.get_market(market_ticker)
-        if not market:
+        """Return implied YES probability in [0,1] (mid or best available)."""
+        m = await self.get_market(market_ticker)
+        if not m:
             return None
 
-        # Kalshi uses prices in cents (0-100), but the API structure may vary
-        # According to API docs, we should use the midpoint of bid/ask or last_price
+        # Preferred: midpoint of yes_bid_dollars / no_ask_dollars
+        ybd, nad = m.get("yes_bid_dollars"), m.get("no_ask_dollars")
+        if ybd is not None and nad is not None:
+            return (float(ybd) + float(nad)) / 2.0
 
-        # Try to calculate midpoint from best bid/ask (dollars format)
-        yes_bid_dollars = market.get('yes_bid_dollars')
-        no_ask_dollars = market.get('no_ask_dollars')
+        # Fallbacks (cents -> dollars)
+        def cents_to_d(v: Any) -> Optional[float]:
+            return float(v) / 100.0 if v is not None else None
 
-        if yes_bid_dollars is not None and no_ask_dollars is not None:
-            # Midpoint between yes_bid_dollars and no_ask_dollars gives the implied probability
-            midpoint = (float(yes_bid_dollars) + float(no_ask_dollars)) / 2.0
-            return midpoint  # Already in dollars (0-1)
+        for pair in (
+            (cents_to_d(m.get("yes_bid")), cents_to_d(m.get("no_ask"))),
+            (cents_to_d(m.get("last_price")), None),
+        ):
+            a, b = pair
+            if a is not None and b is not None:
+                return (a + b) / 2.0
+            if a is not None:
+                return a
 
-        # Try to calculate midpoint from best bid/ask (cents format)
-        yes_bid = market.get('yes_bid')
-        no_ask = market.get('no_ask')
-
-        if yes_bid is not None and no_ask is not None:
-            # Midpoint between yes_bid and no_ask gives the implied probability
-            midpoint = (float(yes_bid) + float(no_ask)) / 2.0
-            return midpoint / 100.0  # Convert from cents to probability
-
-        # Fallback: try last_price (cents format)
-        last_price = market.get('last_price')
-        if last_price is not None:
-            return float(last_price) / 100.0
-
-        # Fallback: try last_price_dollars (dollars format)
-        last_price_dollars = market.get('last_price_dollars')
-        if last_price_dollars is not None:
-            return float(last_price_dollars)
-
-        # Fallback: try yes_bid or yes_ask individually (cents format)
-        yes_bid = market.get('yes_bid')
-        if yes_bid is not None:
-            return float(yes_bid) / 100.0
-
-        yes_ask = market.get('yes_ask')
-        if yes_ask is not None:
-            return float(yes_ask) / 100.0
-
-        # Final fallback: try yes_bid_dollars or yes_ask_dollars (dollars format)
-        yes_bid_dollars = market.get('yes_bid_dollars')
-        if yes_bid_dollars is not None:
-            return float(yes_bid_dollars)
-
-        yes_ask_dollars = market.get('yes_ask_dollars')
-        if yes_ask_dollars is not None:
-            return float(yes_ask_dollars)
+        # Dollar fallbacks
+        for k in ("last_price_dollars", "yes_ask_dollars", "yes_bid_dollars"):
+            v = m.get(k)
+            if v is not None:
+                return float(v)
 
         return None
+
+
+# =========================
+# High-level enrichment
+# =========================
+class KalshiMarketService:
+    """Enrich markets with orderbooks and computed stats (probability, liquidity, spread)."""
+
+    def __init__(self, client: KalshiClient) -> None:
+        self.client = client
+        logger.info("KalshiMarketService ready")  # 2/2 module log lines
+
+    async def get_markets(
+        self,
+        *,
+        limit: int = 200,
+        min_liquidity: float = 100.0,
+        max_spread: float = 0.98,
+        **filters: Any,
+    ) -> List[Dict[str, Any]]:
+        """Return up to `limit` enriched markets, sorted by volume (desc).
+
+        Filters:
+          - end_date_min / end_date_max: YYYY-MM-DD (defaults: today, +365d)
+        """
+        assert limit >= 1, "limit must be >= 1"
+        now = datetime.utcnow()
+        start_date = filters.get("end_date_min") or now.strftime("%Y-%m-%d")
+        end_date = filters.get("end_date_max") or (now + timedelta(days=365)).strftime("%Y-%m-%d")
+
+        raw = await self.client.get_markets(limit=limit * 3)
+        filtered = []
+        for m in raw:
+            end_str = m.get("end_date") or m.get("endDate") or m.get("close_time")
+            if end_str:
+                try:
+                    d = end_str.split("T")[0]
+                    if not (start_date <= d <= end_date):
+                        continue
+                except Exception:
+                    pass
+            filtered.append(m)
+
+        filtered.sort(key=lambda x: float(x.get("volumeNum", x.get("volume", 0)) or 0), reverse=True)
+
+        tasks = [
+            asyncio.create_task(self._enrich_market(m, min_liquidity, max_spread))
+            for m in filtered[: limit * 10]
+        ]
+        enriched: List[Dict[str, Any]] = []
+        for fut in asyncio.as_completed(tasks):
+            res = await fut
+            if res:
+                enriched.append(res)
+                if len(enriched) >= limit:
+                    break
+        return enriched
+
+    async def _enrich_market(
+        self, market: Dict[str, Any], min_liq: float, max_spread: float
+    ) -> Optional[Dict[str, Any]]:
+        """Attach orderbook + metrics; drop markets failing liquidity/spread checks."""
+        ticker = market.get("market_ticker") or market.get("ticker") or market.get("id") or market.get("slug")
+        if not ticker:
+            return None
+        ob = await self.client.get_orderbook(str(ticker))
+        if not ob:
+            return None
+
+        bids, asks = ob.get("bids", []), ob.get("asks", [])
+        if not bids or not asks:
+            return None
+
+        try:
+            best_bid = float(bids[0]["price"])
+            best_ask = float(asks[0]["price"])
+        except Exception:
+            return None
+
+        spread = best_ask - best_bid
+        if spread < 0 or spread > 1 or spread > max_spread:
+            return None
+
+        # Liquidity: min(notional on top-10 sides) * 1000 (notional dollars)
+        bid_liq = sum(float(b["price"]) * float(b["size"]) for b in bids[:10])
+        ask_liq = sum(float(a["price"]) * float(a["size"]) for a in asks[:10])
+        total_liq = min(bid_liq, ask_liq) * 1000
+        if total_liq < min_liq:
+            return None
+
+        prices = market.get("outcomePrices") or market.get("outcome_prices")
+        yes_prob = float(prices[1]) if (isinstance(prices, list) and len(prices) >= 2) else best_ask
+        volume_raw = float(market.get("volumeNum", market.get("volume", 0)) or 0)
+
+        return {
+            "market_slug": market.get("slug") or ticker,
+            "question": market.get("question", "") or market.get("title", ""),
+            "category": market.get("category", ""),
+            "yes_probability": round(yes_prob * 100, 2),
+            "total_liquidity": total_liq,
+            "total_volume": volume_raw,
+            "spread": round(spread * 100, 2),
+            "spread_bps": round(spread * 10000, 0),
+            "best_bid": best_bid,
+            "best_ask": best_ask,
+            "midpoint_price": round((best_bid + best_ask) / 2, 4),
+            "end_date": market.get("end_date") or market.get("endDate") or market.get("close_time", ""),
+            "orderbook": {
+                "bids": [{"price": b["price"], "size": b["size"]} for b in bids[:15]],
+                "asks": [{"price": a["price"], "size": a["size"]} for a in asks[:15]],
+            },
+        }
+
+    # ---------- Optional event formatter ----------
+    async def format_event(self, event: Dict[str, Any], *, with_orderbooks: bool = False) -> Dict[str, Any]:
+        """Return a compact event dict with aggregated volume (optionally with orderbooks)."""
+        markets: List[Dict[str, Any]] = event.get("markets", []) or []
+        total_vol = sum(float(m.get("volumeNum", m.get("volume", 0)) or 0) for m in markets)
+
+        formatted: List[Dict[str, Any]] = []
+        for m in markets:
+            prices = m.get("outcomePrices") or m.get("outcome_prices") or []
+            yes = float(prices[1]) if len(prices) >= 2 else 0.5
+            no = float(prices[0]) if len(prices) >= 1 else 0.5
+            md: Dict[str, Any] = {
+                "outcome": m.get("question", "") or m.get("title", ""),
+                "slug": m.get("slug", "") or m.get("id", ""),
+                "probability": round(yes * 100, 0),
+                "probability_pct": f"{yes * 100:.0f}%",
+                "volume": self._fmt_vol(float(m.get("volumeNum", m.get("volume", 0)) or 0)),
+                "volume_raw": float(m.get("volumeNum", m.get("volume", 0)) or 0),
+                "yes_price": yes,
+                "no_price": no,
+                "buy_yes_display": f"{yes * 100:.1f}¢",
+                "buy_no_display": f"{no * 100:.1f}¢",
+                "active": m.get("active", True),
+            }
+            if with_orderbooks:
+                tick = m.get("market_ticker") or m.get("ticker") or m.get("slug") or m.get("id")
+                if tick:
+                    ob = await self.client.get_orderbook(str(tick))
+                    if ob:
+                        bb, ba = ob.get("best_bid"), ob.get("best_ask")
+                        if isinstance(bb, (int, float)) and isinstance(ba, (int, float)):
+                            spr = ba - bb
+                            bids, asks = ob.get("bids", []), ob.get("asks", [])
+                            bid_liq = sum(float(b["price"]) * float(b["size"]) for b in bids[:10])
+                            ask_liq = sum(float(a["price"]) * float(a["size"]) for a in asks[:10])
+                            md["orderbook"] = {
+                                "best_bid": bb,
+                                "best_ask": ba,
+                                "spread": f"{spr * 100:.1f}%",
+                                "liquidity": self._fmt_vol(min(bid_liq, ask_liq) * 1000),
+                            }
+            formatted.append(md)
+
+        formatted.sort(key=lambda x: x.get("volume_raw", 0), reverse=True)
+        return {
+            "event": {
+                "id": event.get("id", ""),
+                "slug": event.get("slug", ""),
+                "title": event.get("title", ""),
+                "description": event.get("description", ""),
+                "total_volume": self._fmt_vol(total_vol),
+                "total_volume_raw": total_vol,
+                "market_count": len(formatted),
+                "end_date": self._fmt_date(event.get("endDate", "")),
+                "status": "active" if event.get("active", True) else "closed",
+                "category": event.get("category", ""),
+                "markets": formatted,
+            }
+        }
+
+    # ---------- utils ----------
+    @staticmethod
+    def _fmt_vol(v: float) -> str:
+        if v >= 1_000_000:
+            return f"{v/1_000_000:.2f}M"
+        if v >= 1_000:
+            return f"{v/1_000:.2f}K"
+        return f"{v:.0f}"
+
+    @staticmethod
+    def _fmt_date(s: str) -> str:
+        return s.split("T")[0] if s else ""

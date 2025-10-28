@@ -191,7 +191,7 @@ Remember: Your critique ensures the research is comprehensive and unbiased!
             store_critique_results_tool,
         ]
 
-    def handle_tool_message(
+    async def handle_tool_message(
         self,
         state: AgentState,
         tool_name: str,

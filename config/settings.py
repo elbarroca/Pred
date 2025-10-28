@@ -1,93 +1,233 @@
 """
-POLYSEER Configuration Settings
-Centralized configuration using pydantic-settings
+POLYSEER configuration & tunables (merged)
+
+- Settings: environment-driven configuration (Pydantic)
+- Constants: centralized magic numbers for priors, Bayesian calc, memory, agents, etc.
 """
+
+from __future__ import annotations
 from pydantic_settings import BaseSettings
 
 
+# =========================
+# Environment-driven settings
+# =========================
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables"""
+    """Application settings loaded from environment variables."""
 
-    # API KEYS
-    # =======================================
+    # --- API KEYS ---
     OPENAI_API_KEY: str = ""
     VALYU_API_KEY: str = ""
-    ANTHROPIC_API_KEY: str = ""  # Optional, not currently used
 
-    # DATABASE & MEMORY BACKEND
-    # =======================================
+    # --- DATABASE & MEMORY BACKEND ---
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""
-    SUPABASE_ANON_KEY: str = ""  # Alias for SUPABASE_KEY
+    SUPABASE_ANON_KEY: str = ""   # alias for SUPABASE_KEY if you prefer
     SUPABASE_SERVICE_KEY: str = ""
 
-    # Alternative: Direct PostgreSQL connection
-    POSTGRES_URL: str = ""  # postgresql://user:pass@host:port/dbname
+    MEMORY_BACKEND: str = "postgresql"  # "postgresql" | "redis" | "memory"
+    ENABLE_MEMORY_PERSISTENCE: bool = True
 
-    # Alternative: Redis for memory store
-    REDIS_URL: str = ""  # redis://host:port/db
-
-    # Memory Backend Configuration
-    MEMORY_BACKEND: str = "postgresql"  # "postgresql", "redis", or "memory"
-    ENABLE_MEMORY_PERSISTENCE: bool = True  # False = use in-memory store only
-
-    # Weaviate Vector Database (optional, for enhanced memory search)
-    WEAVIATE_URL: str = ""
-    WEAVIATE_API_KEY: str = ""
-    WEAVIATE_MARKETS_CLASS: str = "MarketAnalysisMemory"
-
-    # TRADING API KEYS
+    # --- TRADING / PROVIDER KEYS ---
     KALSHI_API_KEY_ID: str = ""
-    KALSHI_API_KEY: str = ""  # For Bearer token authentication
+    KALSHI_API_KEY: str = ""     # Bearer token
     KALSHI_PRIVATE_KEY_PATH: str = "./keys/kalshi_private_key.pem"
 
-    POLYMARKET_PRIVATE_KEY: str = ""
-    POLYMARKET_FUNDER_ADDRESS: str = ""
-    POLYMARKET_API_KEY: str = ""
-
-    # ========================================
-    # API URLS
-    # ========================================
+    # --- API URLs ---
     POLYMARKET_GAMMA_URL: str = "https://gamma-api.polymarket.com"
     POLYMARKET_CLOB_URL: str = "https://clob.polymarket.com"
+    # Our kalshi client defaults internally to https://trading-api.kalshi.com.
     KALSHI_API_URL: str = "https://api.elections.kalshi.com/trade-api/v2"
 
-    # ========================================
-    # RISK MANAGEMENT
-    # ========================================
+    # --- RISK MGMT ---
     DEFAULT_BANKROLL: float = 10000.0
-    MAX_KELLY_FRACTION: float = 0.05  # 5% max position size
-    MIN_EDGE_THRESHOLD: float = 0.02  # 2% minimum edge
-    RISK_FREE_RATE: float = 0.02  # 2% annual
-    CONFIDENCE_LEVEL: float = 0.95  # 95% for VaR
+    MAX_KELLY_FRACTION: float = 0.05
+    MIN_EDGE_THRESHOLD: float = 0.02
+    RISK_FREE_RATE: float = 0.02
+    CONFIDENCE_LEVEL: float = 0.95
 
-    # ========================================
-    # ENVIRONMENT
-    # ========================================
+    # --- ENV / LOGGING ---
     ENVIRONMENT: str = "development"
     LOG_LEVEL: str = "INFO"
 
-    # ========================================
-    # API SERVER (if running FastAPI)
-    # ========================================
+    # --- API SERVER (optional, if you run FastAPI) ---
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
 
-    # ========================================
-    # LANGSMITH (Optional observability)
-    # ========================================
+    # --- LANGSMITH (optional) ---
     LANGSMITH_API_KEY: str = ""
     LANGSMITH_PROJECT: str = ""
     LANGSMITH_TRACING: str = "false"
     LANGSMITH_ENDPOINT: str = ""
 
     class Config:
-        """Pydantic config"""
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
-        extra = "allow"  # Allow extra fields from .env
+        extra = "allow"  # allow unknown keys in .env for forward compatibility
 
 
 # Global settings instance
 settings = Settings()
+
+
+# =========================
+# System constants / tunables
+# =========================
+
+# --- PRIOR ESTIMATION ---
+PRIOR_MIN_BOUND = 0.01
+PRIOR_MAX_BOUND = 0.99
+PRIOR_BEST_RANGE_MIN = 0.20
+PRIOR_BEST_RANGE_MAX = 0.80
+PRIOR_ESTIMATION_MIN = 0.10
+PRIOR_ESTIMATION_MAX = 0.90
+MAX_POSITIVE_ADJUSTMENT = 0.10
+MAX_NEGATIVE_ADJUSTMENT = -0.10
+
+# --- BAYESIAN CALCULATION ---
+PROB_CLAMP_MIN = 0.0001
+PROB_CLAMP_MAX = 0.9999
+POSTERIOR_CLAMP_MIN = 0.01
+POSTERIOR_CLAMP_MAX = 0.99
+CALCULATION_TOLERANCE = 0.01
+
+# --- EVIDENCE WEIGHTING ---
+MIN_RECENCY_WEIGHT = 0.60
+DEFAULT_VERIFIABILITY_SCORE = 0.50
+DEFAULT_INDEPENDENCE_SCORE = 0.80
+DEFAULT_RECENCY_SCORE = 0.70
+CORRELATION_SHRINKAGE_METHOD = "sqrt"  # 1/sqrt(cluster_size)
+
+# --- SENSITIVITY ANALYSIS ---
+SENSITIVITY_LLR_MULTIPLIERS = [
+    ("baseline", 1.0),
+    ("+25% LLR", 1.25),
+    ("-25% LLR", 0.75),
+]
+SENSITIVITY_WEAKEST_REMOVAL_PCT = 0.20
+SENSITIVITY_VERY_ROBUST_THRESHOLD = 0.05
+SENSITIVITY_ROBUST_THRESHOLD = 0.10
+SENSITIVITY_MODERATE_THRESHOLD = 0.20
+# >20% = highly sensitive
+
+# --- RESEARCH CONSTRAINTS ---
+MIN_EVIDENCE_ITEMS = 5
+MIN_EVIDENCE_FOR_HIGH_CONFIDENCE = 15
+MIN_EVIDENCE_FOR_MODERATE_CONFIDENCE = 10
+MAX_SEARCH_ATTEMPTS = 10
+MIN_SEARCH_RESULTS_PER_QUERY = 3
+MIN_SUBCLAIMS = 4
+MIN_SEARCH_SEEDS_PER_DIRECTION = 3
+MAX_SUBCLAIM_IMBALANCE = 2
+
+# --- MULTI-PERSPECTIVE ANALYSIS ---
+ASSERTIVE_BOUND_OFFSET = 0.10
+SKEPTICAL_BOUND_OFFSET = 0.10
+
+# --- LLR CALIBRATION RANGES ---
+LLR_RANGES = {
+    "A": {"min": 1.0, "max": 3.0, "description": "Definitive evidence (polls, official data)"},
+    "B": {"min": 0.3, "max": 1.0, "description": "Strong evidence (expert analysis, quality reporting)"},
+    "C": {"min": 0.1, "max": 0.5, "description": "Moderate evidence (news, credible sources)"},
+    "D": {"min": 0.01, "max": 0.2, "description": "Weak evidence (opinions, speculative)"},
+}
+EXTREME_LLR_THRESHOLD = 5.0
+
+# --- INTERPRETATION THRESHOLDS ---
+SMALL_CHANGE_THRESHOLD = 0.05
+MODERATE_CHANGE_THRESHOLD = 0.10
+LOW_CONFIDENCE_EVIDENCE_COUNT = 5
+MODERATE_CONFIDENCE_EVIDENCE_COUNT = 10
+HIGH_CONFIDENCE_EVIDENCE_COUNT = 15
+
+# --- PLAN QUALITY WEIGHTS ---
+PLAN_QUALITY_PRIOR_WEIGHT = 0.2
+PLAN_QUALITY_JUSTIFICATION_WEIGHT = 0.2
+PLAN_QUALITY_SUBCLAIMS_WEIGHT = 0.2
+PLAN_QUALITY_BALANCE_WEIGHT = 0.2
+PLAN_QUALITY_SEEDS_WEIGHT = 0.2
+
+# --- PRIOR JUSTIFICATION ---
+MIN_PRIOR_JUSTIFICATION_LENGTH = 20
+
+# --- MEMORY SYSTEM CONSTANTS ---
+MEMORY_STORE_TYPE_DEFAULT = "postgresql"   # "redis" | "postgresql" | "memory"
+MEMORY_CHECKPOINTER_TYPE_DEFAULT = "memory"  # "memory" | "sqlite" | "postgresql"
+MAX_WORKING_MEMORY_MESSAGES = 50
+MAX_EPISODE_MEMORY_ITEMS = 100
+EPISODE_RETENTION_DAYS = 90
+EMBEDDING_MODEL_DEFAULT = "text-embedding-3-small"
+SIMILARITY_THRESHOLD_DEFAULT = 0.7
+
+SEARCH_SIMILAR_MARKETS_LIMIT_DEFAULT = 5
+SEARCH_SIMILAR_MARKETS_LIMIT_MAX = 20
+SEARCH_HISTORICAL_EVIDENCE_LIMIT_DEFAULT = 10
+GET_BASE_RATES_LIMIT_DEFAULT = 5
+
+WEAVIATE_TIMEOUT_SECONDS = 5.0
+WEAVIATE_HYBRID_SEARCH_ALPHA = 0.35
+WEAVIATE_MARKETS_CLASS_DEFAULT = "MarketAnalysisMemory"
+
+# Namespaces for LangGraph Store
+NAMESPACE_KNOWLEDGE_BASE = ("knowledge_base",)
+NAMESPACE_EPISODE_MEMORY = ("episode_memory",)
+NAMESPACE_STRATEGIES = ("strategies",)
+
+# --- AUTONOMOUS AGENT CONSTANTS ---
+AGENT_MAX_ITERATIONS_DEFAULT = 20
+AGENT_ITERATION_EXTENSION_DEFAULT = 5
+AGENT_MAX_ITERATION_CAP_DEFAULT = 50
+AGENT_ITERATION_WARNING_THRESHOLD = 0.8
+AGENT_LLM_TIMEOUT_SECONDS = 60.0
+AGENT_TIMEOUT_SECONDS = 600.0
+AGENT_RECURSION_LIMIT_MULTIPLIER = 5
+AGENT_RECURSION_LIMIT_MIN = 60
+MEMORY_CONTEXT_QUERY_HISTORY_SIZE = 5
+MEMORY_CONTEXT_BLOCKED_URL_DISPLAY_LIMIT = 3
+MEMORY_CONTEXT_URL_MAX_LENGTH = 80
+LOOP_DETECTION_MIN_ITERATIONS = 5
+LOOP_DETECTION_TOOL_WINDOW = 10
+LOOP_DETECTION_SAME_TOOL_THRESHOLD = 5
+LOOP_DETECTION_TOOL_DIVERSITY_THRESHOLD = 6
+LOOP_DETECTION_MAX_UNIQUE_TOOLS = 2
+LOOP_DETECTION_QUERY_THRESHOLD = 5
+LOOP_DETECTION_QUERY_DIVERSITY_THRESHOLD = 2
+LOOP_DETECTION_VALIDATION_CALL_THRESHOLD = 4
+PROGRESS_STALL_CHECK_START_ITERATION = 5
+PROGRESS_STALL_NO_CHANGE_THRESHOLD = 3
+MESSAGE_HISTORY_RECENT_TOOL_LOOKUP_WINDOW = 5
+LOG_MESSAGE_PREVIEW_LENGTH = 240
+LOG_TOOL_ARGS_PREVIEW_LENGTH = 140
+LOG_MEMORY_CONTEXT_PREVIEW_LENGTH = 80
+
+# --- AUTO-MEMORY FEATURE FLAGS ---
+AUTO_QUERY_MEMORY_ENABLED = True
+AUTO_QUERY_SIMILAR_MARKETS_LIMIT = 3
+AUTO_QUERY_HISTORICAL_EVIDENCE_LIMIT = 5
+AUTO_QUERY_SUCCESSFUL_STRATEGIES_LIMIT = 3
+MEMORY_QUERY_TIMEOUT_SECONDS = 5.0
+
+ENABLE_MEMORY_TRACKING_DEFAULT = True
+ENABLE_QUERY_DEDUPLICATION_DEFAULT = True
+ENABLE_URL_BLOCKING_DEFAULT = True
+ENABLE_CIRCUIT_BREAKERS_DEFAULT = True
+ENABLE_AUTO_MEMORY_QUERY_DEFAULT = True
+
+# --- ENV VAR KEYS (reference) ---
+ENV_SUPABASE_URL = "SUPABASE_URL"
+ENV_SUPABASE_KEY = "SUPABASE_KEY"
+ENV_OPENAI_API_KEY = "OPENAI_API_KEY"
+
+__all__ = [
+    "settings",
+    # Constants (export the ones you commonly use outside)
+    "PRIOR_MIN_BOUND", "PRIOR_MAX_BOUND", "PRIOR_BEST_RANGE_MIN", "PRIOR_BEST_RANGE_MAX",
+    "PRIOR_ESTIMATION_MIN", "PRIOR_ESTIMATION_MAX",
+    "PROB_CLAMP_MIN", "PROB_CLAMP_MAX", "POSTERIOR_CLAMP_MIN", "POSTERIOR_CLAMP_MAX",
+    "SENSITIVITY_LLR_MULTIPLIERS", "LLR_RANGES",
+    "MIN_EVIDENCE_ITEMS", "MAX_SEARCH_ATTEMPTS",
+    "MIN_SUBCLAIMS", "MIN_SEARCH_SEEDS_PER_DIRECTION",
+    "NAMESPACE_KNOWLEDGE_BASE", "NAMESPACE_EPISODE_MEMORY", "NAMESPACE_STRATEGIES",
+    "AGENT_MAX_ITERATIONS_DEFAULT", "AGENT_TIMEOUT_SECONDS",
+]
