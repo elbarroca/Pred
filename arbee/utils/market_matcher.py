@@ -3,14 +3,14 @@ Market Matching and Comparison Utilities
 Finds similar markets across different prediction platforms for arbitrage analysis
 """
 import asyncio
+import json
 import re
-from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 from datetime import datetime
-import json
+from typing import Any, Dict, List, Optional, Tuple
 
-from arbee.api_clients.polymarket import PolymarketClient
 from arbee.api_clients.kalshi import KalshiClient
+from arbee.api_clients.polymarket import PolymarketClient
 from arbee.api_clients.valyu import ValyuResearchClient
 
 
@@ -22,7 +22,6 @@ class MarketMatch:
     similarity_score: float
     match_type: str  # "exact", "semantic", "category", "fuzzy"
     key_differences: Dict[str, Any]
-    arbitrage_opportunity: Optional[Dict[str, float]] = None
 
 
 @dataclass
@@ -70,6 +69,8 @@ class MarketMatcher:
             self.kalshi_client.get_event(limit=kalshi_limit)
         )
 
+        assert poly_markets, "Polymarket data fetch failed"
+        assert kalshi_markets, "Kalshi data fetch failed"
         print(f"📊 Retrieved {len(poly_markets)} Polymarket and {len(kalshi_markets)} Kalshi markets")
 
         # Normalize market data
@@ -77,10 +78,10 @@ class MarketMatcher:
         normalized_kalshi = self._normalize_kalshi_data(kalshi_markets)
 
         # Debug: Show sample normalized data
-        if normalized_poly:
-            print(f"📋 Sample Polymarket: {normalized_poly[0]['question']} (tags: {normalized_poly[0]['tags']})")
-        if normalized_kalshi:
-            print(f"📋 Sample Kalshi: {normalized_kalshi[0]['question']} (tags: {normalized_kalshi[0]['tags']})")
+        assert normalized_poly, "Polymarket markets required"
+        assert normalized_kalshi, "Kalshi markets required"
+        print(f"📋 Sample Polymarket: {normalized_poly[0]['question']} (tags: {normalized_poly[0]['tags']})")
+        print(f"📋 Sample Kalshi: {normalized_kalshi[0]['question']} (tags: {normalized_kalshi[0]['tags']})")
 
         # Find matches
         matches = []
@@ -110,32 +111,22 @@ class MarketMatcher:
 
     def _normalize_polymarket_data(self, markets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Normalize Polymarket data for comparison"""
+        assert markets, "Markets list required"
         normalized = []
 
         for market in markets:
-            # Fix JSON parsing issues
+            assert isinstance(market, dict), "Market must be dictionary"
+            # Parse JSON fields
             if isinstance(market.get('outcomes'), str):
-                import json
-                try:
-                    market['outcomes'] = json.loads(market['outcomes'])
-                except:
-                    market['outcomes'] = []
+                market['outcomes'] = json.loads(market['outcomes'])
 
             if isinstance(market.get('outcomePrices'), str):
-                import json
-                try:
-                    market['outcomePrices'] = json.loads(market['outcomePrices'])
-                    # Convert to floats
-                    market['outcomePrices'] = [float(p) for p in market['outcomePrices']]
-                except:
-                    market['outcomePrices'] = []
+                market['outcomePrices'] = json.loads(market['outcomePrices'])
+                market['outcomePrices'] = [float(p) for p in market['outcomePrices']]
 
             # Convert liquidity to float if string
             if isinstance(market.get('liquidity'), str):
-                try:
-                    market['liquidity'] = float(market['liquidity'])
-                except:
-                    market['liquidity'] = 0.0
+                market['liquidity'] = float(market['liquidity'])
 
             # Extract key fields for comparison
             normalized_market = {
@@ -156,9 +147,11 @@ class MarketMatcher:
 
     def _normalize_kalshi_data(self, markets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Normalize Kalshi data for comparison"""
+        assert markets, "Markets list required"
         normalized = []
 
         for market in markets:
+            assert isinstance(market, dict), "Market must be dictionary"
             # Extract key fields for comparison
             normalized_market = {
                 'id': market.get('ticker', ''),
@@ -187,6 +180,7 @@ class MarketMatcher:
         # Question similarity (most important)
         question1 = market1.get('question', '')
         question2 = market2.get('question', '')
+        assert question1 and question2, "Both markets must have questions"
         question_sim = self._text_similarity(question1, question2)
         score += question_sim * 0.4
         factors += 0.4
@@ -201,59 +195,53 @@ class MarketMatcher:
         # Outcome similarity
         outcomes1 = set(market1.get('outcomes', []))
         outcomes2 = set(market2.get('outcomes', []))
-        if outcomes1 and outcomes2:
-            outcome_overlap = len(outcomes1.intersection(outcomes2)) / max(len(outcomes1.union(outcomes2)), 1)
-            score += outcome_overlap * 0.2
-            factors += 0.2
+        assert outcomes1 and outcomes2, "Both markets must have outcomes"
+        outcome_overlap = len(outcomes1.intersection(outcomes2)) / max(len(outcomes1.union(outcomes2)), 1)
+        score += outcome_overlap * 0.2
+        factors += 0.2
 
         # Keyword similarity
         tags1 = set(market1.get('tags', []))
         tags2 = set(market2.get('tags', []))
-        if tags1 and tags2:
-            tag_overlap = len(tags1.intersection(tags2)) / max(len(tags1.union(tags2)), 1)
-            score += tag_overlap * 0.15
-            factors += 0.15
+        assert tags1 and tags2, "Both markets must have tags"
+        tag_overlap = len(tags1.intersection(tags2)) / max(len(tags1.union(tags2)), 1)
+        score += tag_overlap * 0.15
+        factors += 0.15
 
-        # Time proximity (bonus for similar end dates) - reduced weight since markets may be from different periods
-        time_sim = self._time_similarity(market1.get('end_date', ''), market2.get('end_date', ''))
-        score += time_sim * 0.02  # Reduced from 0.05 to 0.02
+        # Time proximity
+        end_date1 = market1.get('end_date', '')
+        end_date2 = market2.get('end_date', '')
+        assert end_date1 and end_date2, "Both markets must have end dates"
+        time_sim = self._time_similarity(end_date1, end_date2)
+        score += time_sim * 0.02
         factors += 0.02
 
-        return min(score / factors if factors > 0 else 0, 1.0)
+        assert factors > 0, "Similarity calculation must have at least one factor"
+        return min(score / factors, 1.0)
 
     def _text_similarity(self, text1: str, text2: str) -> float:
         """Calculate text similarity using multiple methods"""
-        if not text1 or not text2:
-            return 0.0
+        assert text1 and text2, "Both texts required for similarity calculation"
 
-        # Simple word overlap
         words1 = set(re.findall(r'\b\w+\b', text1))
         words2 = set(re.findall(r'\b\w+\b', text2))
-
-        if not words1 or not words2:
-            return 0.0
+        assert words1 and words2, "Both texts must contain words"
 
         overlap = len(words1.intersection(words2))
         union = len(words1.union(words2))
-
-        return overlap / union if union > 0 else 0.0
+        assert union > 0, "Union of words must be non-empty"
+        
+        return overlap / union
 
     def _time_similarity(self, date1: str, date2: str) -> float:
         """Calculate similarity based on time proximity"""
-        if not date1 or not date2:
-            return 0.5  # Neutral score if dates missing
-
-        try:
-            dt1 = datetime.fromisoformat(date1.replace('Z', '+00:00'))
-            dt2 = datetime.fromisoformat(date2.replace('Z', '+00:00'))
-
-            # Days difference
-            diff_days = abs((dt1 - dt2).days)
-
-            # Exponential decay: very similar if < 7 days, drops off after that
-            return max(0, 1.0 - (diff_days / 30.0))
-        except:
-            return 0.5  # Neutral score if parsing fails
+        assert date1 and date2, "Both dates required for time similarity calculation"
+        
+        dt1 = datetime.fromisoformat(date1.replace('Z', '+00:00'))
+        dt2 = datetime.fromisoformat(date2.replace('Z', '+00:00'))
+        
+        diff_days = abs((dt1 - dt2).days)
+        return max(0, 1.0 - (diff_days / 30.0))
 
     def _determine_match_type(self, market1: Dict[str, Any], market2: Dict[str, Any], similarity: float) -> str:
         """Determine the type of match based on similarity and characteristics"""
@@ -282,25 +270,26 @@ class MarketMatcher:
         # Liquidity difference
         liq1 = market1.get('liquidity', 0)
         liq2 = market2.get('liquidity', 0)
-        if liq1 and liq2:
-            differences['liquidity_ratio'] = max(liq1, liq2) / min(liq1, liq2) if min(liq1, liq2) > 0 else float('inf')
+        assert liq1 > 0 and liq2 > 0, "Both markets must have liquidity data"
+        differences['liquidity_ratio'] = max(liq1, liq2) / min(liq1, liq2)
 
         # Volume difference
         vol1 = market1.get('volume', 0)
         vol2 = market2.get('volume', 0)
-        if vol1 and vol2:
-            differences['volume_ratio'] = max(vol1, vol2) / min(vol1, vol2) if min(vol1, vol2) > 0 else float('inf')
+        assert vol1 > 0 and vol2 > 0, "Both markets must have volume data"
+        differences['volume_ratio'] = max(vol1, vol2) / min(vol1, vol2)
 
         # Time difference
-        time_diff = self._time_similarity(market1.get('end_date', ''), market2.get('end_date', ''))
-        differences['time_similarity'] = time_diff
+        end_date1 = market1.get('end_date', '')
+        end_date2 = market2.get('end_date', '')
+        assert end_date1 and end_date2, "Both markets must have end dates"
+        differences['time_similarity'] = self._time_similarity(end_date1, end_date2)
 
         return differences
 
     def _extract_keywords(self, text: str) -> List[str]:
         """Extract meaningful keywords from text"""
-        if not text:
-            return []
+        assert text, "Text required for keyword extraction"
 
         # Remove common stop words and extract meaningful terms
         stop_words = {
@@ -332,51 +321,45 @@ class MarketMatcher:
         opportunities = []
 
         for match in matches:
-            try:
-                # Get prices from both platforms
-                poly_price = self._get_polymarket_price(match.polymarket_market)
-                kalshi_price = await self._get_kalshi_price(match.kalshi_market)
+            # Get prices from both platforms
+            poly_price = self._get_polymarket_price(match.polymarket_market)
+            kalshi_price = await self._get_kalshi_price(match.kalshi_market)
 
-                if poly_price is None or kalshi_price is None:
-                    continue
+            assert poly_price is not None, f"Polymarket price required for market {match.polymarket_market.get('id', 'unknown')}"
+            assert kalshi_price is not None, f"Kalshi price required for market {match.kalshi_market.get('id', 'unknown')}"
 
-                # Calculate arbitrage metrics
-                price_diff = poly_price - kalshi_price
-                edge = abs(price_diff)
+            # Calculate arbitrage metrics
+            price_diff = poly_price - kalshi_price
+            edge = abs(price_diff)
 
-                if edge > 0.02:  # 2% minimum edge
-                    opportunity = ArbitrageOpportunity(
-                        poly_price=poly_price,
-                        kalshi_price=kalshi_price,
-                        price_diff=price_diff,
-                        edge=edge,
-                        confidence=match.similarity_score,
-                        recommended_action="BUY" if price_diff > 0 else "SELL",
-                        risk_factors=self._assess_risks(match)
-                    )
-                    opportunities.append(opportunity)
-
-            except Exception as e:
-                print(f"Error analyzing arbitrage for match {match.polymarket_market.get('id', 'unknown')}: {e}")
-                continue
+            if edge > 0.02:  # 2% minimum edge
+                opportunity = ArbitrageOpportunity(
+                    poly_price=poly_price,
+                    kalshi_price=kalshi_price,
+                    price_diff=price_diff,
+                    edge=edge,
+                    confidence=match.similarity_score,
+                    recommended_action="BUY" if price_diff > 0 else "SELL",
+                    risk_factors=self._assess_risks(match)
+                )
+                opportunities.append(opportunity)
 
         # Sort by edge (highest first)
         opportunities.sort(key=lambda x: x.edge, reverse=True)
-
         return opportunities
 
-    def _get_polymarket_price(self, market: Dict[str, Any]) -> Optional[float]:
+    def _get_polymarket_price(self, market: Dict[str, Any]) -> float:
         """Extract price from Polymarket data"""
         prices = market.get('outcomePrices', [])
-        if prices and len(prices) >= 2:
-            # Use the higher probability outcome as the "main" price
-            return max(prices)
-        return None
+        assert prices and len(prices) >= 2, f"Insufficient price data for market {market.get('id', 'unknown')}"
+        return max(prices)
 
-    async def _get_kalshi_price(self, market: Dict[str, Any]) -> Optional[float]:
+    async def _get_kalshi_price(self, market: Dict[str, Any]) -> float:
         """Extract price from Kalshi data"""
-        # Use the get_market_price method which handles the price calculation
-        return await self.kalshi_client.get_market_price(market['id'])
+        assert 'id' in market, "Market ID required for Kalshi price"
+        price = await self.kalshi_client.get_market_price(market['id'])
+        assert price is not None, f"Price not found for Kalshi market {market['id']}"
+        return price
 
     def _assess_risks(self, match: MarketMatch) -> List[str]:
         """Assess risks for a potential arbitrage trade"""

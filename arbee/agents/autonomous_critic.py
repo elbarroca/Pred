@@ -207,54 +207,38 @@ Remember: Your critique ensures the research is comprehensive and unbiased!
         if tool_name != "store_critique_results_tool":
             return
 
-        # Extract the results from the tool message
-        try:
-            # Get the tool's return value
-            tool_result = None
-            if hasattr(tool_message, "artifact"):
-                tool_result = tool_message.artifact
-            elif hasattr(tool_message, "additional_kwargs"):
-                tool_result = tool_message.additional_kwargs.get("return_value")
+        tool_result = None
+        if hasattr(tool_message, "artifact"):
+            tool_result = tool_message.artifact
+        elif hasattr(tool_message, "additional_kwargs"):
+            tool_result = tool_message.additional_kwargs.get("return_value")
 
-            # If artifact is not available, try parsing the content
-            if tool_result is None and hasattr(tool_message, "content"):
-                import json
-                content = tool_message.content
-                if isinstance(content, str):
-                    try:
-                        tool_result = json.loads(content)
-                    except json.JSONDecodeError:
-                        pass
-                elif isinstance(content, dict):
-                    tool_result = content
+        if tool_result is None and hasattr(tool_message, "content"):
+            import json
+            content = tool_message.content
+            if isinstance(content, str):
+                assert content.strip().startswith("{") or content.strip().startswith("["), "Content must be JSON"
+                tool_result = json.loads(content)
+            elif isinstance(content, dict):
+                tool_result = content
 
-            # Extract the results_stored from the tool output
-            if isinstance(tool_result, dict) and 'results_stored' in tool_result:
-                stored_results = tool_result['results_stored']
+        assert isinstance(tool_result, dict) and 'results_stored' in tool_result, "Tool result must contain results_stored"
+        stored_results = tool_result['results_stored']
+        assert isinstance(stored_results, dict), "Stored results must be dict"
 
-                # Store each field in intermediate_results
-                intermediate = state.setdefault('intermediate_results', {})
-                intermediate['missing_topics'] = stored_results.get('missing_topics', [])
-                intermediate['over_represented_sources'] = stored_results.get('over_represented_sources', [])
-                intermediate['follow_up_search_seeds'] = stored_results.get('follow_up_search_seeds', [])
-                intermediate['duplicate_clusters'] = stored_results.get('duplicate_clusters', [])
-                intermediate['correlation_warnings'] = stored_results.get('correlation_warnings', [])
-                intermediate['analysis_process'] = stored_results.get('analysis_process', '')
+        intermediate = state.setdefault('intermediate_results', {})
+        intermediate['missing_topics'] = stored_results.get('missing_topics', [])
+        intermediate['over_represented_sources'] = stored_results.get('over_represented_sources', [])
+        intermediate['follow_up_search_seeds'] = stored_results.get('follow_up_search_seeds', [])
+        intermediate['duplicate_clusters'] = stored_results.get('duplicate_clusters', [])
+        intermediate['correlation_warnings'] = stored_results.get('correlation_warnings', [])
+        intermediate['analysis_process'] = stored_results.get('analysis_process', '')
 
-                self.logger.info(
-                    f"📥 Critique results stored automatically: "
-                    f"{len(intermediate['missing_topics'])} gaps, "
-                    f"{len(intermediate['correlation_warnings'])} warnings"
-                )
-            else:
-                self.logger.warning(
-                    f"Could not extract results_stored from tool output: {type(tool_result)}"
-                )
-
-        except Exception as exc:
-            self.logger.warning(
-                f"Failed to auto-store critique results: {exc}"
-            )
+        self.logger.info(
+            f"📥 Critique results stored automatically: "
+            f"{len(intermediate['missing_topics'])} gaps, "
+            f"{len(intermediate['correlation_warnings'])} warnings"
+        )
 
     async def agent_node(self, state):
         """

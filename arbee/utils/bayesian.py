@@ -167,7 +167,19 @@ class BayesianCalculator:
             })
 
         # Apply correlation adjustments
+        correlation_adjustments = {
+            'method': 'none',
+            'details': 'No correlation detected'
+        }
         if correlation_clusters:
+            cluster_count = len(correlation_clusters)
+            total_clustered_items = sum(len(c) for c in correlation_clusters)
+            correlation_adjustments = {
+                'method': 'shrinkage',
+                'details': f'Applied correlation shrinkage to {cluster_count} clusters ({total_clustered_items} items)',
+                'cluster_count': cluster_count,
+                'total_clustered_items': total_clustered_items
+            }
             for cluster in correlation_clusters:
                 # Convert cluster to indices (handle both string IDs and integer indices)
                 cluster_indices = []
@@ -210,7 +222,8 @@ class BayesianCalculator:
             'evidence_summary': evidence_summary,
             'total_adjusted_LLR': total_llr,
             'log_odds_posterior': log_odds_posterior,
-            'p_bayesian': p_bayesian
+            'p_bayesian': p_bayesian,
+            'correlation_adjustments': correlation_adjustments
         }
 
     @classmethod

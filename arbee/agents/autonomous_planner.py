@@ -116,27 +116,16 @@ Quality: Prior reasonable (0.3–0.7 for high uncertainty), subclaims balanced &
         if not match:
             return state
 
-        try:
-            plan = json.loads(match.group(1))
-        except (json.JSONDecodeError, ValueError):
-            return state
-
-        if not all(k in plan for k in ("p0_prior", "subclaims", "search_seeds")):
-            return state
+        plan_json = match.group(1).strip()
+        assert plan_json.startswith("{") and plan_json.endswith("}"), "Plan JSON must be valid JSON object"
+        plan = json.loads(plan_json)
+        assert isinstance(plan, dict), "Plan must be dict"
+        assert all(k in plan for k in ("p0_prior", "subclaims", "search_seeds")), "Plan missing required keys"
 
         results = state.get("intermediate_results", {})
         results.update(plan)
         state["intermediate_results"] = results
-        self.logger.info("Planner: extracted FINAL_PLAN_JSON")  # 1/2 log lines
-
-        # Debug: check completion criteria
-        r = state.get("intermediate_results", {})
-        prior = r.get("p0_prior")
-        justification = r.get("prior_justification")
-        subclaims = r.get("subclaims") or []
-        seeds = r.get("search_seeds") or {}
-
-        self.logger.info(f"Debug - prior: {prior}, justification: {bool(justification)}, subclaims: {len(subclaims)}, seeds: {[len(seeds.get(k, [])) for k in ['pro', 'con', 'general']]}")
+        self.logger.info("Planner: extracted FINAL_PLAN_JSON")
         return state
 
     async def is_task_complete(self, state: AgentState) -> bool:
@@ -162,11 +151,10 @@ Quality: Prior reasonable (0.3–0.7 for high uncertainty), subclaims balanced &
             return False
 
         seeds = r.get("search_seeds") or {}
-        # TEMP: Allow completion with at least 2 seeds per category
         if not all(isinstance(seeds.get(k), list) and len(seeds[k]) >= 2 for k in ("pro", "con", "general")):
             return False
 
-        self.logger.info("Planner: planning complete")  # 2/2 log lines
+        self.logger.info("Planner: planning complete")
         return True
 
     async def extract_final_output(self, state: AgentState) -> PlannerOutput:

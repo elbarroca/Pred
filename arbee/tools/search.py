@@ -5,7 +5,14 @@ Provides web search capabilities using Valyu and optionally Tavily
 from typing import List, Dict, Any, Optional
 from langchain_core.tools import tool
 from arbee.api_clients.valyu import ValyuResearchClient
+from arbee.utils.rich_logging import (
+    log_tool_start,
+    log_tool_success,
+    log_tool_error,
+    log_search_results,
+)
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +41,9 @@ async def web_search_tool(
         >>> results = await web_search_tool("Trump 2024 election polls Arizona", max_results=5)
         >>> print(results[0]['title'])
     """
+    start_time = time.time()
     try:
-        logger.info(f"🔍 Web search: '{query}' (max_results={max_results})")
+        log_tool_start("web_search_tool", {"query": query, "max_results": max_results, "date_range_days": date_range_days})
 
         client = ValyuResearchClient()
 
@@ -47,8 +55,10 @@ async def web_search_tool(
 
         # Extract results for this query
         search_results = results.get(query, [])
+        execution_time = time.time() - start_time
 
-        logger.info(f"✅ Found {len(search_results)} results for '{query}'")
+        log_search_results("web_search_tool", query, search_results, max_preview=3)
+        log_tool_success("web_search_tool", {"results_count": len(search_results), "execution_time": execution_time})
 
         # Format results consistently
         formatted_results = []
@@ -65,6 +75,7 @@ async def web_search_tool(
         return formatted_results
 
     except Exception as e:
+        log_tool_error("web_search_tool", e, f"Query: {query}")
         logger.error(f"❌ Web search failed for '{query}': {e}")
         return [{"error": str(e), "query": query}]
 
@@ -96,8 +107,9 @@ async def multi_query_search_tool(
         ... ])
         >>> print(len(results))  # 3 queries
     """
+    start_time = time.time()
     try:
-        logger.info(f"🔍 Multi-query search: {len(queries)} queries")
+        log_tool_start("multi_query_search_tool", {"queries": queries, "max_results_per_query": max_results_per_query, "parallel": parallel})
 
         client = ValyuResearchClient()
 
@@ -108,10 +120,17 @@ async def multi_query_search_tool(
         )
 
         total_results = sum(len(r) for r in results.values())
-        logger.info(f"✅ Multi-query search complete: {total_results} total results")
+        execution_time = time.time() - start_time
+        
+        # Log results for each query
+        for query, query_results in results.items():
+            log_search_results("multi_query_search_tool", query, query_results, max_preview=2)
+        
+        log_tool_success("multi_query_search_tool", {"queries_count": len(queries), "total_results": total_results, "execution_time": execution_time})
 
         return results
 
     except Exception as e:
+        log_tool_error("multi_query_search_tool", e, f"Queries: {len(queries)} queries")
         logger.error(f"❌ Multi-query search failed: {e}")
         return {query: [] for query in queries}

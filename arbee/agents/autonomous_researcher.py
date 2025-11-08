@@ -210,14 +210,11 @@ Remember: Quality over quantity. {self.min_evidence_items} excellent sources bea
         """
         task_input = state.get("task_input", {})
         subclaims = task_input.get("subclaims", [])
-        if not isinstance(subclaims, list):
-            return None
+        assert isinstance(subclaims, list), "Subclaims must be list"
         for sc in subclaims:
-            try:
-                if sc.get("direction") == self.direction:
-                    return sc
-            except Exception:
-                continue
+            assert isinstance(sc, dict), "Subclaim must be dict"
+            if sc.get("direction") == self.direction:
+                return sc
         return subclaims[0] if subclaims else None
 
     async def handle_tool_message(
@@ -252,14 +249,12 @@ Remember: Quality over quantity. {self.min_evidence_items} excellent sources bea
                         if isinstance(v, list):
                             results.extend([r for r in v if isinstance(r, dict)])
                 elif isinstance(content, str):
-                    try:
-                        parsed = json.loads(content)
-                        if isinstance(parsed, dict):
-                            for v in parsed.values():
-                                if isinstance(v, list):
-                                    results.extend([r for r in v if isinstance(r, dict)])
-                    except Exception:
-                        pass
+                    assert content.strip().startswith("{") or content.strip().startswith("["), "Content must be JSON"
+                    parsed = json.loads(content)
+                    assert isinstance(parsed, dict), "Parsed content must be dict"
+                    for v in parsed.values():
+                        if isinstance(v, list):
+                            results.extend([r for r in v if isinstance(r, dict)])
             # web_search_tool usually returns a list
             elif tool_name == "web_search_tool":
                 if isinstance(artifact, list):
@@ -267,12 +262,10 @@ Remember: Quality over quantity. {self.min_evidence_items} excellent sources bea
                 elif isinstance(content, list):
                     results = [r for r in content if isinstance(r, dict)]
                 elif isinstance(content, str):
-                    try:
-                        parsed = json.loads(content)
-                        if isinstance(parsed, list):
-                            results = [r for r in parsed if isinstance(r, dict)]
-                    except Exception:
-                        pass
+                    assert content.strip().startswith("[") or content.strip().startswith("{"), "Content must be JSON"
+                    parsed = json.loads(content)
+                    assert isinstance(parsed, list), "Parsed content must be list"
+                    results = [r for r in parsed if isinstance(r, dict)]
             return results
 
         # Record queries used (normalize to avoid duplicates)
@@ -351,32 +344,23 @@ Remember: Quality over quantity. {self.min_evidence_items} excellent sources bea
                 if any(_url_of(e) == url for e in evidence_items):
                     continue
 
-                # Call extraction tool with enhanced context
-                try:
-                    market_q = state.get("task_input", {}).get("market_question", "")
-                    # Enhance the "subclaim" with direction context for better LLM classification
-                    if subclaim_text:
-                        if self.direction == "pro":
-                            enhanced_claim = f"Evidence supporting YES: {subclaim_text}"
-                        elif self.direction == "con":
-                            enhanced_claim = f"Evidence supporting NO: {subclaim_text}"
-                        else:
-                            enhanced_claim = subclaim_text
+                market_q = state.get("task_input", {}).get("market_question", "")
+                assert isinstance(market_q, str), "Market question must be string"
+                if subclaim_text:
+                    if self.direction == "pro":
+                        enhanced_claim = f"Evidence supporting YES: {subclaim_text}"
+                    elif self.direction == "con":
+                        enhanced_claim = f"Evidence supporting NO: {subclaim_text}"
                     else:
-                        enhanced_claim = subclaim_id
+                        enhanced_claim = subclaim_text
+                else:
+                    enhanced_claim = subclaim_id
 
-                    extraction_result = await extract_evidence_tool.ainvoke({
-                        "search_result": sr,
-                        "subclaim": enhanced_claim,
-                        "market_question": market_q
-                    })
-                except Exception as e:
-                    self.logger.warning(f"Auto-extraction failed for {url}: {e}")
-                    attempted_urls[url] = attempted_urls.get(url, 0) + 1
-                    if attempted_urls[url] >= 2:
-                        blocked.add(url)
-                    continue
-
+                extraction_result = await extract_evidence_tool.ainvoke({
+                    "search_result": sr,
+                    "subclaim": enhanced_claim,
+                    "market_question": market_q
+                })
                 if not extraction_result:
                     attempted_urls[url] = attempted_urls.get(url, 0) + 1
                     if attempted_urls[url] >= 2:
@@ -451,25 +435,21 @@ Remember: Quality over quantity. {self.min_evidence_items} excellent sources bea
         if artifact is None:
             artifact = getattr(tool_message, "additional_kwargs", {}).get("return_value")
 
-        try:
-            if isinstance(artifact, ExtractedEvidence):
-                return artifact
-            if isinstance(artifact, dict):
-                return ExtractedEvidence(**artifact)
-            if hasattr(artifact, "model_dump"):
-                return ExtractedEvidence(**artifact.model_dump())
-        except Exception:
-            pass
+        if isinstance(artifact, ExtractedEvidence):
+            return artifact
+        if isinstance(artifact, dict):
+            return ExtractedEvidence(**artifact)
+        if hasattr(artifact, "model_dump"):
+            return ExtractedEvidence(**artifact.model_dump())
 
         text_payload = self._message_text(tool_message)
         if not text_payload:
             return None
 
-        try:
+        if text_payload.strip().startswith("{") or text_payload.strip().startswith("["):
             data = json.loads(text_payload)
+            assert isinstance(data, dict), "Parsed data must be dict"
             return ExtractedEvidence(**data)
-        except Exception:
-            pass
 
         kv_pairs = re.findall(r'(\w+)=(".*?"|\'.*?\'|[^\s,]+)', text_payload)
         if not kv_pairs:
@@ -485,20 +465,17 @@ Remember: Quality over quantity. {self.min_evidence_items} excellent sources bea
 
         for fk in ("verifiability_score", "independence_score", "recency_score", "estimated_LLR"):
             if fk in parsed:
-                try:
-                    if isinstance(parsed[fk], str):
-                        parsed[fk] = parsed[fk].rstrip(",)")
-                    parsed[fk] = float(parsed[fk])
-                except ValueError:
-                    pass
+                val = parsed[fk]
+                if isinstance(val, str):
+                    val = val.rstrip(",)")
+                assert val.replace(".", "").replace("-", "").isdigit() or val == "", f"{fk} must be numeric"
+                parsed[fk] = float(val) if val else 0.0
 
         if "support" in parsed:
             parsed["support"] = str(parsed["support"]).lower()
 
-        try:
-            return ExtractedEvidence(**parsed)
-        except Exception:
-            return None
+        assert all(k in parsed for k in ["subclaim_id", "title", "url"]), "Missing required fields"
+        return ExtractedEvidence(**parsed)
 
     async def is_task_complete(self, state: AgentState) -> bool:
         """
@@ -595,35 +572,31 @@ Remember: Quality over quantity. {self.min_evidence_items} excellent sources bea
                 evidence_list.append(Evidence(**item))
                 continue
             if isinstance(item, ExtractedEvidence):
-                try:
-                    from datetime import datetime, date as _date
+                from datetime import datetime, date as _date
 
-                    if getattr(item, "published_date", "unknown") != "unknown":
-                        try:
-                            pub_date = datetime.strptime(item.published_date, "%Y-%m-%d").date()
-                        except ValueError:
-                            pub_date = _date.today()
-                    else:
-                        pub_date = _date.today()
+                pub_date_str = getattr(item, "published_date", "unknown")
+                if pub_date_str != "unknown" and isinstance(pub_date_str, str):
+                    assert len(pub_date_str) == 10 and pub_date_str.count("-") == 2, f"Invalid date format: {pub_date_str}"
+                    pub_date = datetime.strptime(pub_date_str, "%Y-%m-%d").date()
+                else:
+                    pub_date = _date.today()
 
-                    evidence_list.append(
-                        Evidence(
-                            subclaim_id=item.subclaim_id,
-                            title=item.title,
-                            url=item.url,
-                            published_date=pub_date,
-                            source_type=item.source_type,
-                            claim_summary=item.claim_summary,
-                            support=item.support,
-                            verifiability_score=item.verifiability_score,
-                            independence_score=item.independence_score,
-                            recency_score=item.recency_score,
-                            estimated_LLR=item.estimated_LLR,
-                            extraction_notes=item.extraction_notes,
-                        )
+                evidence_list.append(
+                    Evidence(
+                        subclaim_id=item.subclaim_id,
+                        title=item.title,
+                        url=item.url,
+                        published_date=pub_date,
+                        source_type=item.source_type,
+                        claim_summary=item.claim_summary,
+                        support=item.support,
+                        verifiability_score=item.verifiability_score,
+                        independence_score=item.independence_score,
+                        recency_score=item.recency_score,
+                        estimated_LLR=item.estimated_LLR,
+                        extraction_notes=item.extraction_notes,
                     )
-                except Exception:
-                    continue
+                )
 
         pro_count = sum(1 for e in evidence_list if e.support == "pro")
         con_count = sum(1 for e in evidence_list if e.support == "con")
@@ -644,6 +617,17 @@ Remember: Quality over quantity. {self.min_evidence_items} excellent sources bea
                     aligned_items += 1
 
         context_alignment_score = (aligned_items / directional_items) if directional_items else 0.0
+
+        # Log evidence gathering with rich logger
+        self.rich_logger.log_evidence_gathering(
+            direction=self.direction,
+            count=len(evidence_list),
+            total_llr=net_llr,
+            sample_evidence=[
+                {"title": e.title[:60], "estimated_LLR": e.estimated_LLR}
+                for e in evidence_list[:3]
+            ],
+        )
 
         self.logger.info(
             f"Final: items={len(evidence_list)} pro={pro_count} con={con_count} neutral={neutral_count} netLLR={net_llr:+.2f} align={context_alignment_score:.2f}"

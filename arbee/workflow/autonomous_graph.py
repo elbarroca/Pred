@@ -20,12 +20,22 @@ from arbee.agents.autonomous_critic import AutonomousCriticAgent
 from arbee.agents.autonomous_analyst import AutonomousAnalystAgent
 from arbee.agents.autonomous_arbitrage import AutonomousArbitrageAgent
 from arbee.agents.autonomous_reporter import AutonomousReporterAgent
+from arbee.api_clients.polymarket import PolymarketClient
 from arbee.utils.memory import get_memory_manager
 from config.settings import settings
+from arbee.utils.rich_logging import (
+    setup_rich_logging,
+    log_workflow_transition,
+    log_workflow_progress,
+    log_workflow_summary,
+    log_agent_separator,
+    log_agent_output_full,
+)
 
 # Keep logging minimal per module: creation + finalization of workflow.
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+workflow_logger = setup_rich_logging("POLYSEER Workflow")
 
 
 # -----------------------------
@@ -106,11 +116,25 @@ async def autonomous_planner_node(state: Dict[str, Any], store: Optional[BaseSto
         "tool_calls": stats.get("total_tool_calls", 0),
     }
 
+    # Discover related threshold markets
+    related_markets = []
+    market_slug = state.get("market_slug", "")
+    market_question = state.get("market_question", "")
+    
+    if market_slug and market_question:
+        client = PolymarketClient()
+        related_markets = await client.get_related_markets(market_slug, market_question)
+        logger.info(f"📊 Discovered {len(related_markets)} related threshold markets")
+
+    # Log full planner output
+    log_agent_output_full("Planner", result)
+    
     return {
         "planner_output": result,
         "p0_prior": result.p0_prior,
         "search_seeds": result.search_seeds,
         "subclaims": result.subclaims,
+        "related_markets": related_markets,  # Store related markets in state
         "messages": _msg(f"Autonomous Planner: {trace['subclaim_count']} subclaims, {trace['iterations']:.1f} iterations"),
         "agent_traces": [_trace("AutonomousPlannerAgent", "autonomous_planning_completed", trace)],
     }
@@ -159,6 +183,11 @@ async def autonomous_researcher_node(state: Dict[str, Any], store: Optional[Base
         )
 
     details = {"total_items": len(all_evidence), "direction_counts": counts}
+    
+    # Log full researcher outputs
+    for direction, output in results.items():
+        log_agent_output_full(f"Researcher ({direction.upper()})", output)
+    
     return {
         "researcher_output": results,
         "all_evidence": all_evidence,
@@ -187,6 +216,9 @@ async def autonomous_critic_node(state: Dict[str, Any], store: Optional[BaseStor
         "over_represented_sources": len(result.over_represented_sources),
         "iterations": stats.get("average_iterations", 0),
     }
+    
+    # Log full critic output
+    log_agent_output_full("Critic", result)
 
     return {
         "critic_output": result,
@@ -209,17 +241,68 @@ async def autonomous_analyst_node(state: Dict[str, Any], store: Optional[BaseSto
         market_question=state["market_question"],
     )
 
+    # Derive threshold-specific probabilities if related markets exist
+    related_markets = state.get("related_markets", [])
+    threshold_probabilities = {}
+    
+    if related_markets:
+        main_p_bayesian = result.p_bayesian
+        logger.info(f"📊 Deriving threshold-specific probabilities from main p_bayesian={main_p_bayesian:.2%}")
+        
+        for market_info in related_markets:
+            threshold = market_info.get("threshold")
+            market_price = market_info.get("market_price")
+            
+            assert threshold is not None, "Threshold required for related market"
+            assert market_price is not None, f"Market price required for threshold {threshold}%"
+            
+            # Derive threshold-specific probability
+            # Use market price as strong prior, adjust based on main p_bayesian
+            adjustment_factor = 0.3
+            threshold_weight = 0.7
+            main_weight = adjustment_factor
+            
+            threshold_adjustment = (100 - threshold) / 100.0
+            adjusted_main_p = main_p_bayesian * (1 + (threshold_adjustment - 0.5) * 0.2)
+            p_threshold = (threshold_weight * market_price) + (main_weight * adjusted_main_p)
+            p_threshold = max(0.0, min(1.0, p_threshold))
+            
+            threshold_probabilities[threshold] = {
+                "threshold": threshold,
+                "p_bayesian": p_threshold,
+                "market_price": market_price,
+                "edge": p_threshold - market_price,
+                "market_slug": market_info.get("slug", ""),
+            }
+            
+            logger.info(
+                f"📊 Threshold {threshold}%+: "
+                f"p_bayesian={p_threshold:.2%}, "
+                f"market_price={market_price:.2%}, "
+                f"edge={p_threshold - market_price:.2%}"
+            )
+        
+        # Store threshold probabilities in result
+        assert hasattr(result, 'model_dump'), "Result must have model_dump method"
+        result_dict = result.model_dump()
+        result_dict['threshold_probabilities'] = threshold_probabilities
+
     stats = agent.get_stats()
     trace = {
         "p_bayesian": result.p_bayesian,
         "evidence_items": len(result.evidence_summary),
         "sensitivity_scenarios": len(result.sensitivity_analysis),
         "iterations": stats.get("average_iterations", 0),
+        "threshold_markets": len(threshold_probabilities),
     }
+    
+    # Log full analyst output
+    log_agent_output_full("Analyst", result)
 
     return {
         "analyst_output": result,
         "p_bayesian": result.p_bayesian,
+        "threshold_probabilities": threshold_probabilities,  # Store threshold probabilities in state
         "messages": _msg(f"Autonomous Analyst: p={result.p_bayesian:.2%} (from {result.p0:.2%})"),
         "agent_traces": [_trace("AutonomousAnalystAgent", "autonomous_analysis_completed", trace)],
     }
@@ -227,9 +310,73 @@ async def autonomous_analyst_node(state: Dict[str, Any], store: Optional[BaseSto
 
 async def autonomous_arbitrage_node(state: Dict[str, Any], store: Optional[BaseStore] = None) -> Dict[str, Any]:
     """
-    Detect actionable mispricing opportunities.
+    Detect actionable mispricing opportunities and edge signals.
     """
     assert "p_bayesian" in state and "market_question" in state, "state missing p_bayesian/market_question"
+    
+    # Log p_bayesian value received from Analyst
+    p_bayesian = state["p_bayesian"]
+    logger.info(f"📊 Arbitrage node received p_bayesian={p_bayesian:.2%} from Analyst")
+    
+    # Verify consistency
+    analyst_output = state.get("analyst_output")
+    assert analyst_output is not None, "analyst_output required in state"
+    assert hasattr(analyst_output, "p_bayesian"), "analyst_output must have p_bayesian attribute"
+    analyst_p = analyst_output.p_bayesian
+    assert abs(analyst_p - p_bayesian) < 0.001, f"p_bayesian mismatch: state={p_bayesian:.2%} vs analyst_output={analyst_p:.2%}"
+    logger.info(f"📊 Arbitrage node verified analyst_output.p_bayesian={analyst_p:.2%}")
+
+    # Fetch market prices if not already in state
+    market_price = state.get("market_price")
+    market_data = state.get("market_data")
+    
+    if market_price is None or market_data is None:
+        market_slug = state.get("market_slug", "")
+        providers = state.get("providers", ["polymarket"])
+        
+        assert "polymarket" in providers and market_slug, "Polymarket provider and market_slug required for price fetch"
+        
+        client = PolymarketClient()
+        market = await client.gamma.get_market(market_slug)
+        assert market is not None, f"Market not found: {market_slug}"
+        
+        market_price = None
+        price_source = None
+        
+        # Strategy 1: Use orderbook first (most accurate)
+        token_ids = market.get("clobTokenIds", [])
+        if token_ids and len(token_ids) >= 2:
+            yes_token_id = token_ids[1]
+            orderbook = client.clob.get_orderbook(yes_token_id, depth=5)
+            market_price = orderbook.get("mid_price", None)
+            if market_price:
+                price_source = "orderbook_mid_price"
+                logger.info(f"📊 Using orderbook mid_price: {market_price:.2%} for {market_slug}")
+        
+        # Strategy 2: Use outcomePrices if orderbook unavailable
+        if market_price is None:
+            prices = market.get("outcomePrices", [])
+            outcomes = market.get("outcomes", [])
+            assert prices and len(prices) >= 2, f"Insufficient price data for {market_slug}"
+            
+            price_floats = [float(p) for p in prices if p is not None and p != '']
+            assert len(price_floats) >= 2, f"Insufficient valid prices for {market_slug}"
+            
+            if len(outcomes) > 2:
+                market_price = max(price_floats)
+                price_source = "outcomePrices_max"
+                logger.info(f"📊 Using max outcome price from multi-outcome market: {market_price:.2%} (outcomes: {outcomes})")
+            else:
+                market_price = price_floats[1] if len(price_floats) > 1 else price_floats[0]
+                price_source = "outcomePrices_yes"
+                logger.info(f"📊 Using outcomePrices[1] (YES): {market_price:.2%}")
+        
+        assert market_price is not None, f"Failed to extract market price for {market_slug}"
+        logger.info(f"📊 Market price extracted: {market_price:.2%} (source: {price_source})")
+        
+        market_data = market
+        state["market_price"] = market_price
+        state["market_data"] = market_data
 
     agent = AutonomousArbitrageAgent(
         store=store,
@@ -237,25 +384,104 @@ async def autonomous_arbitrage_node(state: Dict[str, Any], store: Optional[BaseS
         min_edge_threshold=state.get("min_edge_threshold", settings.MIN_EDGE_THRESHOLD),
         enable_auto_memory_query=store is not None,
     )
-    try:
+    
+    # Collect all markets to analyze (main + threshold markets)
+    all_markets_to_analyze = []
+    
+    # Add main market
+    all_markets_to_analyze.append({
+        "slug": state.get("market_slug", ""),
+        "p_bayesian": state["p_bayesian"],
+        "market_price": market_price,
+        "market_data": market_data,
+        "threshold": None,  # Main market has no threshold
+        "is_main": True,
+    })
+    
+    # Add threshold markets if they exist
+    threshold_probabilities = state.get("threshold_probabilities", {})
+    related_markets = state.get("related_markets", [])
+    
+    for market_info in related_markets:
+        threshold = market_info.get("threshold")
+        if threshold and threshold in threshold_probabilities:
+            threshold_data = threshold_probabilities[threshold]
+            all_markets_to_analyze.append({
+                "slug": market_info.get("slug", ""),
+                "p_bayesian": threshold_data.get("p_bayesian", state["p_bayesian"]),
+                "market_price": threshold_data.get("market_price", 0.5),
+                "market_data": market_info.get("market_data"),
+                "threshold": threshold,
+                "is_main": False,
+            })
+    
+    # Detect arbitrage for each market
+    all_opportunities = []
+    edge_signals = []
+    composite_edge_score = None
+    
+    for market_info in all_markets_to_analyze:
+        market_slug = market_info["slug"]
+        p_bayesian_market = market_info["p_bayesian"]
+        market_price_market = market_info["market_price"]
+        market_data_market = market_info.get("market_data")
+        threshold = market_info.get("threshold")
+        
+        assert market_slug, "Market slug required for arbitrage analysis"
+        
+        logger.info(
+            f"📊 Analyzing arbitrage for market: {market_slug} "
+            f"(threshold={threshold}%, p_bayesian={p_bayesian_market:.2%}, market_price={market_price_market:.2%})"
+        )
+        
         opportunities = await agent.detect_arbitrage(
-            p_bayesian=state["p_bayesian"],
-            market_slug=state.get("market_slug", ""),
+            p_bayesian=p_bayesian_market,
+            market_slug=market_slug,
             market_question=state["market_question"],
             providers=state.get("providers", ["polymarket", "kalshi"]),
             bankroll=state.get("bankroll", settings.DEFAULT_BANKROLL),
             max_kelly=state.get("max_kelly", settings.MAX_KELLY_FRACTION),
             min_edge_threshold=state.get("min_edge_threshold", settings.MIN_EDGE_THRESHOLD),
+            market_price=market_price_market,
+            market_data=market_data_market,
         )
-        details = {"opportunity_count": len(opportunities), "providers_checked": state.get("providers", [])}
-        return {
-            "arbitrage_output": opportunities,
-            "messages": _msg(f"Autonomous Arbitrage: {len(opportunities)} opportunities"),
-            "agent_traces": [_trace("AutonomousArbitrageAgent", "autonomous_arbitrage_completed", details)],
-        }
-    except Exception:
-        # Preserve original behavior: continue without arbitrage on failure.
-        return {"arbitrage_output": []}
+        
+        # Add threshold info to opportunities
+        for opp in opportunities:
+            assert hasattr(opp, 'model_dump') or hasattr(opp, '__dict__'), "Opportunity must be serializable"
+            opp_dict = opp.model_dump() if hasattr(opp, 'model_dump') else opp.__dict__
+            opp_dict['threshold'] = threshold
+            opp_dict['market_slug'] = market_slug
+            all_opportunities.append(opp)
+        
+        logger.info(f"📊 Found {len(opportunities)} opportunities for {market_slug}")
+    
+    details = {
+        "opportunity_count": len(all_opportunities),
+        "markets_analyzed": len(all_markets_to_analyze),
+        "threshold_markets": len([m for m in all_markets_to_analyze if m.get("threshold")]),
+        "providers_checked": state.get("providers", []),
+        "edge_detection_enabled": getattr(settings, "ENABLE_EDGE_DETECTION", True),
+        "p_bayesian_used": p_bayesian,
+        "market_price_used": market_price,
+    }
+    
+    # Log full arbitrage output (opportunities)
+    if all_opportunities:
+        for i, opp in enumerate(all_opportunities[:5], 1):
+            log_agent_output_full(f"Arbitrage Opportunity {i}", opp)
+    else:
+        logger.info("No arbitrage opportunities found")
+    
+    return {
+        "arbitrage_output": all_opportunities,
+        "edge_signals": edge_signals,
+        "composite_edge_score": composite_edge_score,
+        "market_price": market_price,
+        "market_data": market_data,
+        "messages": _msg(f"Autonomous Arbitrage: {len(all_opportunities)} opportunities across {len(all_markets_to_analyze)} markets"),
+        "agent_traces": [_trace("AutonomousArbitrageAgent", "autonomous_arbitrage_completed", details)],
+    }
 
 
 async def autonomous_reporter_node(state: Dict[str, Any], store: Optional[BaseStore] = None) -> Dict[str, Any]:
@@ -263,18 +489,38 @@ async def autonomous_reporter_node(state: Dict[str, Any], store: Optional[BaseSt
     Generate a final report from all upstream outputs.
     """
     assert {"market_question", "planner_output", "researcher_output", "critic_output", "analyst_output", "arbitrage_output"} <= state.keys(), "state missing required keys for report"
+    
+    # Verify analyst_output consistency
+    analyst_output = state.get("analyst_output")
+    assert analyst_output is not None, "analyst_output required in state"
+    assert hasattr(analyst_output, "p_bayesian"), "analyst_output must have p_bayesian attribute"
+    p_bayesian = analyst_output.p_bayesian
+    state_p_bayesian = state.get("p_bayesian")
+    assert state_p_bayesian is not None, "p_bayesian required in state"
+    assert abs(state_p_bayesian - p_bayesian) < 0.001, f"p_bayesian mismatch: state={state_p_bayesian:.2%} vs analyst_output={p_bayesian:.2%}"
+    logger.info(f"📊 Reporter node verified p_bayesian={p_bayesian:.2%}")
 
     agent = AutonomousReporterAgent(store=store, max_iterations=10, enable_auto_memory_query=store is not None)
+    
+    # Prepare analyst_output with threshold_probabilities if available
+    analyst_output_dict = state["analyst_output"].model_dump()
+    threshold_probabilities = state.get("threshold_probabilities", {})
+    if threshold_probabilities:
+        analyst_output_dict['threshold_probabilities'] = threshold_probabilities
+    
     result = await agent.generate_report(
         market_question=state["market_question"],
         planner_output=state["planner_output"].model_dump(),
         researcher_output={k: v.model_dump() for k, v in state["researcher_output"].items()},
         critic_output=state["critic_output"].model_dump(),
-        analyst_output=state["analyst_output"].model_dump(),
-        arbitrage_opportunities=[opp.model_dump() for opp in state["arbitrage_output"]],
+        analyst_output=analyst_output_dict,  # Include threshold_probabilities
+        arbitrage_opportunities=[opp.model_dump() if hasattr(opp, 'model_dump') else opp for opp in state["arbitrage_output"]],
         timestamp=state.get("timestamp", datetime.now().isoformat()),
         workflow_id=state.get("workflow_id", ""),
     )
+    
+    # Log full reporter output
+    log_agent_output_full("Reporter", result)
 
     return {
         "reporter_output": result,
@@ -292,26 +538,61 @@ def create_autonomous_polyseer_workflow(store: Optional[BaseStore] = None) -> St
     START → planner → researcher → critic → analyst → arbitrage → reporter → END
     """
     logger.info("🚀 Creating AUTONOMOUS POLYSEER workflow")
+    workflow_logger.log_agent_start(
+        task_description="POLYSEER Autonomous Workflow",
+        input_info={"store_configured": store is not None},
+    )
 
     workflow = StateGraph(WorkflowState)
 
     async def planner_wrapper(s: Dict[str, Any]) -> Dict[str, Any]:
-        return await autonomous_planner_node(s, store)
+        log_workflow_transition("START", "Planner", "1/6", {"market_question": s.get('market_question', 'Unknown')[:80]})
+        log_workflow_progress(1, 6, "Planner", "running")
+        log_agent_separator("Planner Agent")
+        result = await autonomous_planner_node(s, store)
+        log_workflow_progress(1, 6, "Planner", "completed")
+        return result
 
     async def researcher_wrapper(s: Dict[str, Any]) -> Dict[str, Any]:
-        return await autonomous_researcher_node(s, store)
+        log_workflow_transition("Planner", "Researcher", "2/6", {"subclaims": len(s.get('planner_output', {}).get('subclaims', [])) if isinstance(s.get('planner_output'), dict) else 0})
+        log_workflow_progress(2, 6, "Researcher", "running")
+        log_agent_separator("Researcher Agents (PRO/CON/GENERAL)")
+        result = await autonomous_researcher_node(s, store)
+        log_workflow_progress(2, 6, "Researcher", "completed")
+        return result
 
     async def critic_wrapper(s: Dict[str, Any]) -> Dict[str, Any]:
-        return await autonomous_critic_node(s, store)
+        log_workflow_transition("Researcher", "Critic", "3/6")
+        log_workflow_progress(3, 6, "Critic", "running")
+        log_agent_separator("Critic Agent")
+        result = await autonomous_critic_node(s, store)
+        log_workflow_progress(3, 6, "Critic", "completed")
+        return result
 
     async def analyst_wrapper(s: Dict[str, Any]) -> Dict[str, Any]:
-        return await autonomous_analyst_node(s, store)
+        log_workflow_transition("Critic", "Analyst", "4/6")
+        log_workflow_progress(4, 6, "Analyst", "running")
+        log_agent_separator("Analyst Agent")
+        result = await autonomous_analyst_node(s, store)
+        log_workflow_progress(4, 6, "Analyst", "completed")
+        return result
 
     async def arbitrage_wrapper(s: Dict[str, Any]) -> Dict[str, Any]:
-        return await autonomous_arbitrage_node(s, store)
+        p_bayesian = s.get('analyst_output', {}).get('p_bayesian', 0.5) if isinstance(s.get('analyst_output'), dict) else 0.5
+        log_workflow_transition("Analyst", "Arbitrage", "5/6", {"p_bayesian": f"{p_bayesian:.2%}"})
+        log_workflow_progress(5, 6, "Arbitrage", "running")
+        log_agent_separator("Arbitrage Agent")
+        result = await autonomous_arbitrage_node(s, store)
+        log_workflow_progress(5, 6, "Arbitrage", "completed")
+        return result
 
     async def reporter_wrapper(s: Dict[str, Any]) -> Dict[str, Any]:
-        return await autonomous_reporter_node(s, store)
+        log_workflow_transition("Arbitrage", "Reporter", "6/6")
+        log_workflow_progress(6, 6, "Reporter", "running")
+        log_agent_separator("Reporter Agent")
+        result = await autonomous_reporter_node(s, store)
+        log_workflow_progress(6, 6, "Reporter", "completed")
+        return result
 
     workflow.add_node("planner", planner_wrapper)
     workflow.add_node("researcher", researcher_wrapper)
@@ -374,4 +655,56 @@ async def run_autonomous_workflow(
     config = {"configurable": {"thread_id": workflow_id}, "recursion_limit": 150}
     final_state = await app.ainvoke(initial_state, config)
     logger.info(f"✅ Autonomous workflow {workflow_id} completed successfully")
+    
+    # Calculate execution stats for summary
+    execution_stats = {
+        "workflow_id": workflow_id,
+        "timestamp": timestamp,
+    }
+    
+    # Extract stats from final state
+    analyst_output = final_state.get('analyst_output')
+    assert analyst_output is not None, "analyst_output required in final state"
+    assert hasattr(analyst_output, 'p_bayesian'), "analyst_output must have p_bayesian"
+    execution_stats['p_bayesian'] = analyst_output.p_bayesian
+    
+    # Count evidence items
+    researcher_output = final_state.get('researcher_output')
+    assert researcher_output is not None, "researcher_output required in final state"
+    assert isinstance(researcher_output, dict), "researcher_output must be dict"
+    total_evidence = sum(
+        len(r.get('evidence_items', [])) if isinstance(r, dict) else 0
+        for r in researcher_output.values()
+    )
+    execution_stats['evidence_items'] = total_evidence
+    
+    # Count opportunities
+    arbitrage_output = final_state.get('arbitrage_output')
+    assert arbitrage_output is not None, "arbitrage_output required in final state"
+    assert isinstance(arbitrage_output, list), "arbitrage_output must be list"
+    execution_stats['opportunities'] = len(arbitrage_output)
+    
+    # Count tool calls and iterations from agent traces
+    total_tool_calls = 0
+    total_iterations = 0
+    agent_times = {}
+    tool_call_counts = {}
+    
+    for key in ['planner_output', 'researcher_output', 'critic_output', 'analyst_output', 'arbitrage_output', 'reporter_output']:
+        output = final_state.get(key)
+        assert output is not None, f"{key} required in final state"
+        assert isinstance(output, dict), f"{key} must be dict"
+        if 'tool_calls' in output:
+            assert isinstance(output['tool_calls'], list), f"{key}.tool_calls must be list"
+            count = len(output['tool_calls'])
+            agent_name = key.replace('_output', '').title()
+            tool_call_counts[agent_name] = count
+            total_tool_calls += count
+    
+    execution_stats['total_tool_calls'] = total_tool_calls
+    execution_stats['total_iterations'] = total_iterations
+    
+    # Log workflow summary
+    log_workflow_summary(execution_stats, agent_times, tool_call_counts)
+    
     return final_state

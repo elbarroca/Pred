@@ -130,12 +130,11 @@ class MemoryManager:
         Persist learnings from the current episode for reuse in similar cases.
 
         Returns:
-            True on success, False otherwise.
+            True on success.
         """
-        if not self.store:
-            return False
-
+        assert self.store is not None, "Store required for episode memory persistence"
         assert episode_id and memory_type, "episode_id and memory_type are required"
+        
         item = EpisodeMemoryItem(
             episode_id=episode_id,
             market_question=market_question,
@@ -144,15 +143,12 @@ class MemoryManager:
             effectiveness=effectiveness,
             metadata=metadata or {},
         )
-        try:
-            await self.store.aput(
-                ("episode_memory",),
-                f"{episode_id}:{memory_type}:{datetime.utcnow().isoformat()}",
-                item.model_dump(),
-            )
-            return True
-        except Exception:
-            return False
+        await self.store.aput(
+            ("episode_memory",),
+            f"{episode_id}:{memory_type}:{datetime.utcnow().isoformat()}",
+            item.model_dump(),
+        )
+        return True
 
     async def retrieve_episode_memories(
         self,
@@ -166,22 +162,15 @@ class MemoryManager:
         Returns:
             A list of EpisodeMemoryItem.
         """
-        if not self.store:
-            return []
-
-        try:
-            results = await self.store.asearch(("episode_memory",), query=market_question, limit=limit)
-        except Exception:
-            return []
-
+        assert self.store is not None, "Store required for episode memory retrieval"
+        
+        results = await self.store.asearch(("episode_memory",), query=market_question, limit=limit)
+        
         out: List[EpisodeMemoryItem] = []
         for r in results:
-            try:
-                item = EpisodeMemoryItem(**r.value)
-                if memory_type is None or item.memory_type == memory_type:
-                    out.append(item)
-            except Exception:
-                continue
+            item = EpisodeMemoryItem(**r.value)
+            if memory_type is None or item.memory_type == memory_type:
+                out.append(item)
         return out
 
     async def store_knowledge(
@@ -190,29 +179,24 @@ class MemoryManager:
         content: Any,
         metadata: Optional[Dict[str, Any]] = None,
         generate_embedding: bool = True,
-    ) -> Optional[str]:
+    ) -> str:
         """
         Store an item in the knowledge base for long‑term access.
 
         Returns:
-            Knowledge ID on success, else None.
+            Knowledge ID.
         """
-        if not self.store:
-            return None
-
+        assert self.store is not None, "Store required for knowledge persistence"
         assert content_type, "content_type is required"
+        
         knowledge_id = f"{content_type}:{datetime.utcnow().timestamp()}"
         item = KnowledgeBaseItem(id=knowledge_id, content_type=content_type, content=content, metadata=metadata or {})
 
-        # TODO: generate embeddings if/when an embedding service is wired.
         if generate_embedding:
             pass
 
-        try:
-            await self.store.aput(("knowledge_base",), knowledge_id, item.model_dump())
-            return knowledge_id
-        except Exception:
-            return None
+        await self.store.aput(("knowledge_base",), knowledge_id, item.model_dump())
+        return knowledge_id
 
     async def search_knowledge(
         self,
@@ -226,38 +210,31 @@ class MemoryManager:
         Returns:
             A list of KnowledgeBaseItem.
         """
-        if not self.store:
-            return []
-
-        try:
-            results = await self.store.asearch(("knowledge_base",), query=query, limit=limit)
-        except Exception:
-            return []
-
+        assert self.store is not None, "Store required for knowledge search"
+        
+        logger.info(f"🔍 Searching knowledge base: query='{query[:50]}...', content_type={content_type}, limit={limit}")
+        results = await self.store.asearch(("knowledge_base",), query=query, limit=limit)
+        logger.info(f"✅ Found {len(results)} knowledge base results")
+        
         items: List[KnowledgeBaseItem] = []
         for r in results:
-            try:
-                item = KnowledgeBaseItem(**r.value)
-                if content_type is None or item.content_type == content_type:
-                    items.append(item)
-            except Exception:
-                continue
+            item = KnowledgeBaseItem(**r.value)
+            if content_type is None or item.content_type == content_type:
+                items.append(item)
         return items
 
-    async def get_workflow_summary(self, workflow_id: str) -> Optional[Dict[str, Any]]:
+    async def get_workflow_summary(self, workflow_id: str) -> Dict[str, Any]:
         """
         Summarize a past workflow execution by aggregating episode memories.
 
         Returns:
-            Summary dict or None if no memories found.
+            Summary dict.
         """
-        if not self.store:
-            return None
+        assert self.store is not None, "Store required for workflow summary"
 
         memories = await self.retrieve_episode_memories(market_question="", limit=100)
         target = [m for m in memories if m.episode_id == workflow_id]
-        if not target:
-            return None
+        assert target, f"No memories found for workflow {workflow_id}"
 
         summary: Dict[str, Any] = {
             "workflow_id": workflow_id,
@@ -307,88 +284,63 @@ class MemoryManager:
 # =========================
 # Store Factory
 # =========================
-def create_store_from_config(settings: Optional[Any] = None) -> Optional[BaseStore]:
+def create_store_from_config(settings: Optional[Any] = None) -> BaseStore:
     """
     Create and initialize a LangGraph Store from configuration.
 
     Backends:
       - PostgreSQL (recommended; works with Supabase)
-      - In-Memory (default/fallback; non‑persistent)
+      - In-Memory (non‑persistent)
     """
-    def _in_memory_store():
+    if settings is None:
+        from config.settings import settings as global_settings
+        settings = global_settings
+
+    if not getattr(settings, "ENABLE_MEMORY_PERSISTENCE", True):
         from langgraph.store.memory import InMemoryStore
         return InMemoryStore()
 
-    if settings is None:
-        try:
-            from config.settings import settings as global_settings
-            settings = global_settings
-        except ImportError:
-            return _in_memory_store()
-
-    if not getattr(settings, "ENABLE_MEMORY_PERSISTENCE", True):
-        return _in_memory_store()
-
     backend = getattr(settings, "MEMORY_BACKEND", "postgresql").lower()
+    assert backend == "postgresql", f"Unsupported backend: {backend}"
 
-    if backend == "postgresql":
-        postgres_url = getattr(settings, "POSTGRES_URL", "") or ""
-        if not postgres_url:
-            supabase_url = getattr(settings, "SUPABASE_URL", "") or ""
-            supabase_key = getattr(settings, "SUPABASE_SERVICE_KEY", "") or getattr(settings, "SUPABASE_KEY", "") or ""
-            if supabase_url and supabase_key:
-                import re
-                m = re.search(r"https://([a-zA-Z0-9-]+)\.supabase\.co", supabase_url)
-                if m:
-                    project_ref = m.group(1)
-                    postgres_url = f"postgresql://postgres:{supabase_key}@db.{project_ref}.supabase.co:5432/postgres"
+    postgres_url = getattr(settings, "POSTGRES_URL", "") or ""
+    if not postgres_url:
+        supabase_url = getattr(settings, "SUPABASE_URL", "") or ""
+        supabase_key = getattr(settings, "SUPABASE_SERVICE_KEY", "") or getattr(settings, "SUPABASE_KEY", "") or ""
+        assert supabase_url and supabase_key, "PostgreSQL URL or Supabase credentials required"
+        
+        import re
+        m = re.search(r"https://([a-zA-Z0-9-]+)\.supabase\.co", supabase_url)
+        assert m, f"Invalid Supabase URL format: {supabase_url}"
+        project_ref = m.group(1)
+        postgres_url = f"postgresql://postgres:{supabase_key}@db.{project_ref}.supabase.co:5432/postgres"
 
-        if postgres_url:
-            try:
-                # Lazy imports to avoid hard dependency unless used.
-                from langgraph.store.postgres import PostgresStore  # type: ignore
+    assert postgres_url, "PostgreSQL connection string required"
+    
+    from langgraph.store.postgres import PostgresStore  # type: ignore
+    import psycopg  # type: ignore
+    
+    test_conn = psycopg.connect(postgres_url, autocommit=True)
+    test_conn.close()
+    
+    store = PostgresStore.from_conn_string(postgres_url)
 
-                # Optional connection test.
-                try:
-                    import psycopg  # type: ignore
-                    test_conn = psycopg.connect(postgres_url, autocommit=True)
-                    test_conn.close()
-                except Exception:
-                    pass
+    import asyncio
+    
+    async def init_store():
+        async with store:
+            await store.setup()
 
-                store = PostgresStore.from_conn_string(postgres_url)
+    try:
+        asyncio.get_running_loop()
+        import nest_asyncio  # type: ignore
+        nest_asyncio.apply()
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(init_store())
+    except RuntimeError:
+        asyncio.run(init_store())
 
-                # Ensure schema exists.
-                import asyncio
-
-                async def init_store():
-                    async with store:
-                        await store.setup()
-
-                try:
-                    asyncio.get_running_loop()
-                    # Running loop detected; try nested strategy if available.
-                    try:
-                        import nest_asyncio  # type: ignore
-                        nest_asyncio.apply()
-                        loop = asyncio.get_event_loop()
-                        loop.run_until_complete(init_store())
-                    except Exception:
-                        # Best effort; continue without explicit setup if nested execution fails.
-                        pass
-                except RuntimeError:
-                    asyncio.run(init_store())
-
-                return store
-            except ImportError:
-                # Guidance only; keep fallback silent and predictable.
-                # To enable Postgres: pip install 'langgraph-checkpoint-postgres[pool]' psycopg[binary]
-                return _in_memory_store()
-            except Exception:
-                return _in_memory_store()
-
-    # Fallback: in-memory (non‑persistent)
-    return _in_memory_store()
+    return store
 
 
 # =========================
@@ -411,6 +363,7 @@ def get_memory_manager(
     if _memory_manager is None:
         if store is None:
             store = create_store_from_config()
+        assert store is not None, "Store creation failed"
         _memory_manager = MemoryManager(config=config, store=store, checkpointer=checkpointer)
     return _memory_manager
 

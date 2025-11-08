@@ -7,6 +7,8 @@ POLYSEER configuration & tunables (merged)
 
 from __future__ import annotations
 from pydantic_settings import BaseSettings
+from pydantic import Field
+from typing import List
 
 
 # =========================
@@ -59,6 +61,13 @@ class Settings(BaseSettings):
     LANGSMITH_PROJECT: str = ""
     LANGSMITH_TRACING: str = "false"
     LANGSMITH_ENDPOINT: str = ""
+
+    # --- EDGE DETECTION & INSIDER TRACKING ---
+    ENABLE_INSIDER_TRACKING: bool = False
+    ENABLE_EDGE_DETECTION: bool = True
+    INSIDER_WALLET_ADDRESSES: List[str] = Field(default_factory=list)
+    POLYSIGHTS_API_KEY: str = ""
+    STAND_TRADE_API_KEY: str = ""
 
     class Config:
         env_file = ".env"

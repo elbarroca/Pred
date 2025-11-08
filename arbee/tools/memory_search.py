@@ -8,7 +8,11 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import tool
 from langgraph.store.base import SearchItem
-
+from arbee.utils.rich_logging import (
+    log_tool_start,
+    log_tool_success,
+    log_tool_error,
+)
 from arbee.utils.memory import get_memory_manager
 from config.system_constants import (
     SEARCH_SIMILAR_MARKETS_LIMIT_DEFAULT,
@@ -18,11 +22,12 @@ from config.system_constants import (
     NAMESPACE_KNOWLEDGE_BASE,
     NAMESPACE_STRATEGIES,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 
-# -----------------------------
 # Internal helpers
-# -----------------------------
 def _clamp_limit(limit: int, default: int, max_val: int) -> int:
     """Clamp user-provided limits to safe bounds."""
     try:
@@ -37,9 +42,7 @@ def _get_store():
     return getattr(mm, "store", None)
 
 
-# -----------------------------
 # Public tools
-# -----------------------------
 @tool
 async def search_similar_markets_tool(
     market_question: str,
@@ -77,43 +80,48 @@ async def search_historical_evidence_tool(
     Returns:
         List of simplified evidence dicts.
     """
-    assert isinstance(topic, str) and topic.strip(), "topic is required"
-    limit = max(1, int(limit))
-
-    store = _get_store()
-    if not store:
-        return []
-
-    filt: Dict[str, Any] = {"content_type": "evidence_item"}
-    if evidence_type:
-        filt["evidence_type"] = evidence_type
-
     try:
-        results = await store.asearch((NAMESPACE_KNOWLEDGE_BASE,), query=topic, filter=filt, limit=limit)
-    except Exception:
-        return []
+        log_tool_start("search_historical_evidence_tool", {"topic": topic[:80], "evidence_type": evidence_type, "limit": limit})
+        assert isinstance(topic, str) and topic.strip(), "topic is required"
+        limit = max(1, int(limit))
 
-    out: List[Dict[str, Any]] = []
-    for item in results:
-        val = item.value or {}
-        content = val.get("content")
-        if isinstance(content, dict):
-            out.append(
-                {
-                    "id": val.get("id") or item.key,
-                    "title": content.get("title", "Unknown"),
-                    "url": content.get("url", ""),
-                    "llr": content.get("LLR", 0.0),
-                    "verifiability": content.get("verifiability_score", 0.5),
-                    "independence": content.get("independence_score", 0.8),
-                    "recency": content.get("recency_score", 0.7),
-                    "support": content.get("support", "neutral"),
-                    "claim_summary": content.get("claim_summary", ""),
-                    "stored_at": item.updated_at.isoformat() if getattr(item, "updated_at", None) else "",
-                    "relevance_score": getattr(item, "score", None),
-                }
-            )
-    return out
+        store = _get_store()
+        if not store:
+            log_tool_success("search_historical_evidence_tool", {"results_count": 0, "note": "No store configured"})
+            return []
+
+        filt: Dict[str, Any] = {"content_type": "evidence_item"}
+        if evidence_type:
+            filt["evidence_type"] = evidence_type
+
+        results = await store.asearch((NAMESPACE_KNOWLEDGE_BASE,), query=topic, filter=filt, limit=limit)
+        
+        out: List[Dict[str, Any]] = []
+        for item in results:
+            val = item.value or {}
+            content = val.get("content")
+            if isinstance(content, dict):
+                out.append(
+                    {
+                        "id": val.get("id") or item.key,
+                        "title": content.get("title", "Unknown"),
+                        "url": content.get("url", ""),
+                        "llr": content.get("LLR", 0.0),
+                        "verifiability": content.get("verifiability_score", 0.5),
+                        "independence": content.get("independence_score", 0.8),
+                        "recency": content.get("recency_score", 0.7),
+                        "support": content.get("support", "neutral"),
+                        "claim_summary": content.get("claim_summary", ""),
+                        "stored_at": item.updated_at.isoformat() if getattr(item, "updated_at", None) else "",
+                        "relevance_score": getattr(item, "score", None),
+                    }
+                )
+        
+        log_tool_success("search_historical_evidence_tool", {"results_count": len(out)})
+        return out
+    except Exception as e:
+        log_tool_error("search_historical_evidence_tool", e, f"Topic: {topic[:50]}")
+        return []
 
 
 @tool
@@ -136,49 +144,65 @@ async def get_base_rates_tool(
     assert isinstance(event_category, str) and event_category.strip(), "event_category is required"
     limit = max(1, int(limit))
 
-    store = _get_store()
-    if store:
-        filt: Dict[str, Any] = {"content_type": "base_rate"}
-        if time_range:
-            filt["time_range"] = time_range
+    try:
+        log_tool_start("get_base_rates_tool", {"event_category": event_category[:80], "time_range": time_range, "limit": limit})
+        store = _get_store()
+        if store:
+            filt: Dict[str, Any] = {"content_type": "base_rate"}
+            if time_range:
+                filt["time_range"] = time_range
 
-        try:
-            results = await store.asearch((NAMESPACE_KNOWLEDGE_BASE,), query=event_category, filter=filt, limit=limit)
-        except Exception:
-            results = []
+            try:
+                results = await store.asearch((NAMESPACE_KNOWLEDGE_BASE,), query=event_category, filter=filt, limit=limit)
+            except Exception:
+                results = []
 
-        if results:
-            rates: List[float] = []
-            sources: List[str] = []
-            for it in results:
-                val = it.value or {}
-                content = val.get("content")
-                if isinstance(content, dict):
-                    rate = content.get("base_rate")
-                    if isinstance(rate, (int, float)) and 0.0 <= rate <= 1.0:
-                        rates.append(float(rate))
-                        src = content.get("source", "Unknown")
-                        if isinstance(src, str):
-                            sources.append(src)
-            if rates:
-                avg = sum(rates) / len(rates)
-                return {
-                    "event_category": event_category,
-                    "base_rate": avg,
-                    "sample_size": len(rates),
-                    "confidence": "moderate" if len(rates) >= 3 else "low",
-                    "sources": sources[:3],
-                    "note": f"Aggregated from {len(rates)} stored base-rate items",
-                }
+            if results:
+                rates: List[float] = []
+                sources: List[str] = []
+                for it in results:
+                    val = it.value or {}
+                    content = val.get("content")
+                    if isinstance(content, dict):
+                        rate = content.get("base_rate")
+                        if isinstance(rate, (int, float)) and 0.0 <= rate <= 1.0:
+                            rates.append(float(rate))
+                            src = content.get("source", "Unknown")
+                            if isinstance(src, str):
+                                sources.append(src)
+                if rates:
+                    avg = sum(rates) / len(rates)
+                    result = {
+                        "event_category": event_category,
+                        "base_rate": avg,
+                        "sample_size": len(rates),
+                        "confidence": "moderate" if len(rates) >= 3 else "low",
+                        "sources": sources[:3],
+                        "note": f"Aggregated from {len(rates)} stored base-rate items",
+                    }
+                    log_tool_success("get_base_rates_tool", {"base_rate": avg, "sample_size": len(rates), "confidence": result["confidence"]})
+                    return result
 
-    # Fallback neutral prior when no stored base rates available
-    return {
-        "event_category": event_category,
-        "base_rate": 0.5,
-        "sample_size": 0,
-        "confidence": "low",
-        "note": "No stored base-rate data; returning neutral 50% prior",
-    }
+        # Fallback neutral prior when no stored base rates available
+        result = {
+            "event_category": event_category,
+            "base_rate": 0.5,
+            "sample_size": 0,
+            "confidence": "low",
+            "note": "No stored base-rate data; returning neutral 50% prior",
+        }
+        log_tool_success("get_base_rates_tool", {"base_rate": 0.5, "sample_size": 0, "note": "No data found"})
+        return result
+    except Exception as e:
+        log_tool_error("get_base_rates_tool", e, f"Category: {event_category[:50]}")
+        return {
+            "event_category": event_category,
+            "base_rate": 0.5,
+            "sample_size": 0,
+            "confidence": "low",
+            "note": "No stored base-rate data; returning neutral 50% prior",
+            "error": str(e),
+        }
 
 
 @tool

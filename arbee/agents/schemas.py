@@ -191,6 +191,23 @@ class PlatformSide(BaseModel):
     stake: float = Field(..., ge=0.0, description="Amount to stake on this side")
 
 
+class EdgeSignal(BaseModel):
+    """A single edge detection signal"""
+    edge_type: Literal[
+        "information_asymmetry",
+        "market_inefficiency",
+        "sentiment_edge",
+        "base_rate_violation",
+        "mentions_mispricing",
+    ] = Field(..., description="Type of edge detected")
+    strength: float = Field(..., ge=0.0, le=1.0, description="Edge strength (0-1)")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence in detection (0-1)")
+    evidence: List[str] = Field(default_factory=list, description="Evidence supporting this edge")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional edge-specific data"
+    )
+
+
 class ArbitrageOpportunity(BaseModel):
     """A potential arbitrage opportunity"""
     arbitrage_type: Literal["mispricing", "cross_platform"] = Field(
@@ -234,6 +251,37 @@ class ArbitrageOpportunity(BaseModel):
     kelly_fraction: float = Field(..., ge=0.0, le=1.0, description="Optimal bet fraction")
     suggested_stake: float = Field(..., ge=0.0, description="Dollar amount to stake")
     trade_rationale: str = Field(..., description="Why this is/isn't a good trade")
+    edge_signals: List[EdgeSignal] = Field(
+        default_factory=list, description="Edge signals contributing to this opportunity"
+    )
+
+
+class EdgeSignal(BaseModel):
+    """A single edge detection signal"""
+    edge_type: Literal[
+        "information_asymmetry",
+        "market_inefficiency",
+        "sentiment_edge",
+        "base_rate_violation",
+        "mentions_mispricing",
+    ] = Field(..., description="Type of edge detected")
+    strength: float = Field(..., ge=0.0, le=1.0, description="Edge strength (0-1)")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence in detection (0-1)")
+    evidence: List[str] = Field(default_factory=list, description="Evidence supporting this edge")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional edge-specific data"
+    )
+
+
+class CompositeEdgeScore(BaseModel):
+    """Composite edge score combining multiple edge signals"""
+    composite_score: float = Field(..., ge=0.0, le=1.0, description="Overall edge score")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Overall confidence")
+    weighted_components: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict, description="Breakdown by edge type"
+    )
+    recommendation: str = Field(..., description="Trading recommendation based on edge")
+    signal_count: int = Field(default=0, description="Number of edge signals combined")
 
 
 class ArbitrageDetectorOutput(BaseModel):
@@ -241,6 +289,12 @@ class ArbitrageDetectorOutput(BaseModel):
     opportunities: List[ArbitrageOpportunity] = Field(default_factory=list)
     best_opportunity: Optional[ArbitrageOpportunity] = None
     total_expected_value: float = Field(default=0.0)
+    edge_signals: List[EdgeSignal] = Field(
+        default_factory=list, description="Edge signals beyond arbitrage"
+    )
+    composite_edge_score: Optional[CompositeEdgeScore] = Field(
+        None, description="Combined edge score"
+    )
     disclaimer: str = Field(default="NOT FINANCIAL ADVICE")
 
 
@@ -277,7 +331,6 @@ class ReporterOutput(BaseModel):
         description="Markdown summary"
     )
     full_json: Dict[str, Any] = Field(..., description="Complete data package")
-    disclaimer: str = Field(default="NOT FINANCIAL ADVICE")
     disclaimer: str = Field(default="NOT FINANCIAL ADVICE")
 
 

@@ -5,6 +5,7 @@ Gamma API (events/markets) + CLOB API (orderbooks/prices)
 import json
 import logging
 import httpx
+import re
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from py_clob_client.client import ClobClient
@@ -376,3 +377,208 @@ class PolymarketClient:
             return dt.strftime("%b %d, %Y")
         except:
             return iso_date
+    
+    async def get_related_markets(self, main_slug: str, question_text: str) -> List[Dict]:
+        """
+        Find related threshold markets for the same question.
+        
+        Strategy:
+        1. Try to get event containing the main market, then get all markets in that event
+        2. If event not found, search markets by question text similarity
+        3. Extract threshold from outcome text (e.g., "30%+", "40%+")
+        
+        Args:
+            main_slug: Slug of the main market
+            question_text: The market question text
+            
+        Returns:
+            List of related market dicts with structure:
+            {
+                "slug": "market-slug-30pct",
+                "threshold": 30,  # extracted threshold value
+                "market_price": 0.95,  # YES price
+                "market_data": {...}  # full market data
+            }
+        """
+        related_markets = []
+        
+        try:
+            # Strategy 1: Get event containing main market
+            main_market = await self.gamma.get_market(main_slug)
+            event_id = main_market.get('eventId') or main_market.get('event_id')
+            
+            if event_id:
+                # Get all markets in the same event
+                # Try to get event by ID - if API doesn't support id filter, search by slug or get all markets
+                events = []
+                try:
+                    # Try filtering by event ID
+                    events = await self.gamma.get_events(limit=100, eventId=event_id)
+                except Exception:
+                    try:
+                        # Fallback: try with id parameter
+                        events = await self.gamma.get_events(limit=100, id=event_id)
+                    except Exception:
+                        # If event lookup fails, we'll use Strategy 2 (text similarity)
+                        pass
+                
+                if events:
+                    event = events[0]
+                    markets_in_event = event.get('markets', [])
+                    
+                    for market in markets_in_event:
+                        market = self.gamma._normalize_market(market)
+                        market_slug = market.get('slug', '')
+                        
+                        # Skip the main market itself
+                        if market_slug == main_slug:
+                            continue
+                        
+                        # Extract threshold from question/outcome
+                        threshold = self._extract_threshold(market.get('question', ''))
+                        if threshold is None:
+                            # Try extracting from outcomes
+                            outcomes = market.get('outcomes', [])
+                            for outcome in outcomes:
+                                threshold = self._extract_threshold(str(outcome))
+                                if threshold is not None:
+                                    break
+                        
+                        # Only include markets with extractable thresholds
+                        if threshold is not None:
+                            # Extract market price
+                            prices = market.get('outcomePrices', [])
+                            market_price = None
+                            
+                            if prices and len(prices) >= 2:
+                                try:
+                                    market_price = float(prices[1])  # YES price
+                                except (ValueError, TypeError):
+                                    pass
+                            
+                            # Try orderbook if outcomePrices not available
+                            if market_price is None:
+                                token_ids = market.get('clobTokenIds', [])
+                                if token_ids and len(token_ids) >= 2:
+                                    try:
+                                        orderbook = self.clob.get_orderbook(token_ids[1], depth=5)
+                                        market_price = orderbook.get('mid_price')
+                                    except Exception:
+                                        pass
+                            
+                            if market_price is not None:
+                                related_markets.append({
+                                    "slug": market_slug,
+                                    "threshold": threshold,
+                                    "market_price": market_price,
+                                    "market_data": market,
+                                    "question": market.get('question', ''),
+                                })
+            
+            # Strategy 2: If no event found, search by question text similarity
+            if not related_markets:
+                # Extract base question (remove threshold-specific parts)
+                base_question = self._extract_base_question(question_text)
+                
+                # Search markets with similar question text
+                all_markets = await self.gamma.get_markets(active=True, limit=500)
+                
+                for market in all_markets:
+                    market = self.gamma._normalize_market(market)
+                    market_slug = market.get('slug', '')
+                    
+                    # Skip main market
+                    if market_slug == main_slug:
+                        continue
+                    
+                    market_question = market.get('question', '')
+                    
+                    # Check if question is similar (contains base question)
+                    if base_question.lower() in market_question.lower() or market_question.lower() in base_question.lower():
+                        threshold = self._extract_threshold(market_question)
+                        if threshold is None:
+                            outcomes = market.get('outcomes', [])
+                            for outcome in outcomes:
+                                threshold = self._extract_threshold(str(outcome))
+                                if threshold is not None:
+                                    break
+                        
+                        if threshold is not None:
+                            prices = market.get('outcomePrices', [])
+                            market_price = None
+                            
+                            if prices and len(prices) >= 2:
+                                try:
+                                    market_price = float(prices[1])
+                                except (ValueError, TypeError):
+                                    pass
+                            
+                            if market_price is not None:
+                                related_markets.append({
+                                    "slug": market_slug,
+                                    "threshold": threshold,
+                                    "market_price": market_price,
+                                    "market_data": market,
+                                    "question": market_question,
+                                })
+            
+            # Sort by threshold (ascending)
+            related_markets.sort(key=lambda m: m.get('threshold', 0))
+            
+            logger.info(f"Found {len(related_markets)} related threshold markets for {main_slug}")
+            return related_markets
+            
+        except Exception as e:
+            logger.warning(f"Error discovering related markets: {e}")
+            return []
+    
+    def _extract_threshold(self, text: str) -> Optional[int]:
+        """
+        Extract threshold percentage from text.
+        
+        Examples:
+            "30%+" -> 30
+            "40% or higher" -> 40
+            "Score 50%+" -> 50
+        """
+        if not text:
+            return None
+        
+        # Pattern: number followed by % and optionally +
+        patterns = [
+            r'(\d+)%\s*\+',  # "30%+", "40% +"
+            r'(\d+)\s*%\s*or\s*higher',  # "30% or higher"
+            r'score\s*(\d+)%',  # "score 30%"
+            r'(\d+)%',  # Just "30%"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                try:
+                    threshold = int(match.group(1))
+                    # Reasonable threshold range: 0-100
+                    if 0 <= threshold <= 100:
+                        return threshold
+                except (ValueError, IndexError):
+                    continue
+        
+        return None
+    
+    def _extract_base_question(self, question_text: str) -> str:
+        """
+        Extract base question by removing threshold-specific parts.
+        
+        Example:
+            "Google Gemini 3 score 30%+ on Humanity's Last Exam" 
+            -> "Google Gemini 3 score on Humanity's Last Exam"
+        """
+        # Remove threshold patterns
+        base = re.sub(r'\d+%\s*\+', '', question_text, flags=re.IGNORECASE)
+        base = re.sub(r'\d+\s*%\s*or\s*higher', '', base, flags=re.IGNORECASE)
+        base = re.sub(r'score\s*\d+%', 'score', base, flags=re.IGNORECASE)
+        
+        # Clean up extra spaces
+        base = re.sub(r'\s+', ' ', base).strip()
+        
+        return base

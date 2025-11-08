@@ -2,10 +2,18 @@
 Bayesian Analysis Tools
 Wraps existing BayesianCalculator as tools for agent use
 """
-from typing import List, Dict, Any
-from langchain_core.tools import tool
-from arbee.utils.bayesian import BayesianCalculator
 import logging
+from typing import Any, Dict, List
+
+from langchain_core.tools import tool
+
+from arbee.utils.bayesian import BayesianCalculator
+from arbee.utils.rich_logging import (
+    log_bayesian_result,
+    log_tool_error,
+    log_tool_start,
+    log_tool_success,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +25,7 @@ def get_calculator() -> BayesianCalculator:
     global _calculator
     if _calculator is None:
         _calculator = BayesianCalculator()
+    assert _calculator is not None, "Calculator initialization failed"
     return _calculator
 
 
@@ -51,152 +60,110 @@ async def bayesian_calculate_tool(
         ... )
         >>> print(result['p_bayesian'])
     """
-    try:
-        logger.info(f"🧮 Bayesian calculation: prior={prior_p:.2%}, {len(evidence_items)} items")
+    assert 0.0 <= prior_p <= 1.0, f"Prior probability must be between 0 and 1, got {prior_p}"
+    assert evidence_items, "Evidence items list required"
+    assert isinstance(evidence_items, list), "Evidence items must be a list"
+    
+    log_tool_start("bayesian_calculate_tool", {"prior_p": prior_p, "evidence_count": len(evidence_items), "correlation_clusters": len(correlation_clusters) if correlation_clusters else 0})
+    logger.info(f"🧮 Bayesian calculation: prior={prior_p:.2%}, {len(evidence_items)} items")
 
-        calculator = get_calculator()
+    calculator = get_calculator()
 
-        # SCHEMA VALIDATION (NEW)
-        normalized_items: List[Dict[str, Any]] = []
-        for idx, item in enumerate(evidence_items):
-            if item is None:
-                logger.warning(f"Skipping None evidence item at index {idx}")
-                continue
+    # SCHEMA VALIDATION
+    normalized_items: List[Dict[str, Any]] = []
+    for idx, item in enumerate(evidence_items):
+        assert item is not None, f"Evidence item at index {idx} cannot be None"
 
-            # Convert to dict if needed
-            if hasattr(item, "model_dump"):
-                normalized = item.model_dump()
-            elif hasattr(item, "dict"):
-                normalized = item.dict()
+        # Convert to dict if needed
+        if hasattr(item, "model_dump"):
+            normalized = item.model_dump()
+        elif hasattr(item, "dict"):
+            normalized = item.dict()
+        else:
+            normalized = dict(item)
+
+        # VALIDATE REQUIRED KEYS
+        required_keys = ['verifiability_score', 'independence_score', 'recency_score']
+        missing_keys = [k for k in required_keys if k not in normalized]
+        assert not missing_keys, f"Evidence item {idx} missing required keys: {missing_keys}. Available keys: {list(normalized.keys())}"
+
+        # Ensure LLR key exists
+        if 'LLR' not in normalized and 'estimated_LLR' in normalized:
+            normalized['LLR'] = normalized['estimated_LLR']
+        assert 'LLR' in normalized or 'estimated_LLR' in normalized, f"Evidence item {idx} has no LLR or estimated_LLR. Keys: {list(normalized.keys())}"
+        if 'LLR' not in normalized:
+            normalized['LLR'] = normalized['estimated_LLR']
+
+        # Ensure ID exists (for evidence_summary)
+        if 'id' not in normalized:
+            if 'subclaim_id' in normalized:
+                normalized['id'] = normalized['subclaim_id']
+            elif 'title' in normalized:
+                normalized['id'] = normalized['title'][:50]
             else:
-                normalized = dict(item)
+                normalized['id'] = f"evidence_{idx}"
 
-            # VALIDATE REQUIRED KEYS
-            required_keys = ['verifiability_score', 'independence_score', 'recency_score']
-            missing_keys = [k for k in required_keys if k not in normalized]
-            if missing_keys:
-                logger.error(
-                    f"Evidence item {idx} missing required keys: {missing_keys}. "
-                    f"Available keys: {list(normalized.keys())}"
-                )
-                # Set defaults for missing scores
-                normalized.setdefault('verifiability_score', 0.5)
-                normalized.setdefault('independence_score', 0.8)
-                normalized.setdefault('recency_score', 0.5)
-
-            # Ensure LLR key exists
-            if 'LLR' not in normalized and 'estimated_LLR' in normalized:
-                normalized['LLR'] = normalized['estimated_LLR']
-            elif 'LLR' not in normalized:
-                logger.error(
-                    f"Evidence item {idx} has no LLR or estimated_LLR. Keys: {list(normalized.keys())}"
-                )
+        # Sign correction based on support direction
+        support = str(normalized.get('support', '')).lower()
+        if support in {'pro', 'con', 'neutral'}:
+            llr_value = float(normalized.get('LLR', 0.0))
+            if support == 'neutral':
                 normalized['LLR'] = 0.0
+            elif llr_value < 0 and support == 'pro':
+                normalized['LLR'] = abs(llr_value)
+            elif llr_value > 0 and support == 'con':
+                normalized['LLR'] = -abs(llr_value)
+            else:
+                normalized['LLR'] = llr_value
 
-            # Ensure ID exists (for evidence_summary)
-            if 'id' not in normalized:
-                if 'subclaim_id' in normalized:
-                    normalized['id'] = normalized['subclaim_id']
-                elif 'title' in normalized:
-                    normalized['id'] = normalized['title'][:50]
-                else:
-                    normalized['id'] = f"evidence_{idx}"
+        normalized_items.append(normalized)
 
-            # Sign correction based on support direction
-            support = str(normalized.get('support', '')).lower()
-            if support in {'pro', 'con', 'neutral'}:
-                try:
-                    llr_value = float(normalized.get('LLR', 0.0))
-                except (TypeError, ValueError):
-                    llr_value = 0.0
-                if support == 'neutral':
-                    normalized['LLR'] = 0.0
-                elif llr_value < 0 and support == 'pro':
-                    normalized['LLR'] = abs(llr_value)
-                elif llr_value > 0 and support == 'con':
-                    normalized['LLR'] = -abs(llr_value)
-                else:
-                    normalized['LLR'] = llr_value
+    assert normalized_items, "No valid evidence items after normalization"
 
-            normalized_items.append(normalized)
+    # Perform aggregation
+    result = calculator.aggregate_evidence(
+        prior_p=prior_p,
+        evidence_items=normalized_items,
+        correlation_clusters=correlation_clusters or []
+    )
 
-        if not normalized_items:
-            raise ValueError("No valid evidence items after normalization")
+    # VALIDATE OUTPUT SCHEMA
+    required_output_keys = [
+        'p_bayesian', 'log_odds_prior', 'log_odds_posterior', 'evidence_summary', 'correlation_adjustments'
+    ]
+    missing_output_keys = [k for k in required_output_keys if k not in result]
+    assert not missing_output_keys, f"BayesianCalculator output missing keys: {missing_output_keys}. Returned keys: {list(result.keys())}"
 
-        # Perform aggregation
-        result = calculator.aggregate_evidence(
-            prior_p=prior_p,
-            evidence_items=normalized_items,
-            correlation_clusters=correlation_clusters or []
-        )
+    # Ensure correlation_adjustments is always a dict
+    assert isinstance(result.get('correlation_adjustments'), dict), f"correlation_adjustments must be dict, got {type(result.get('correlation_adjustments'))}"
 
-        # VALIDATE OUTPUT SCHEMA (NEW)
-        required_output_keys = [
-            'p_bayesian', 'log_odds_prior', 'log_odds_posterior', 'evidence_summary'
-        ]
-        missing_output_keys = [k for k in required_output_keys if k not in result]
-        if missing_output_keys:
-            logger.error(
-                f"BayesianCalculator output missing keys: {missing_output_keys}. "
-                f"Returned keys: {list(result.keys())}"
-            )
-            # Add defaults
-            result.setdefault('p_bayesian', prior_p)
-            result.setdefault('log_odds_prior', 0.0)
-            result.setdefault('log_odds_posterior', 0.0)
-            result.setdefault('evidence_summary', [])
+    # VALIDATE evidence_summary structure
+    assert 'evidence_summary' in result, "evidence_summary required in result"
+    assert isinstance(result['evidence_summary'], list), "evidence_summary must be a list"
+    
+    for summary_idx, summary_item in enumerate(result['evidence_summary']):
+        assert isinstance(summary_item, dict), f"evidence_summary[{summary_idx}] must be dict, got {type(summary_item)}"
+        
+        # Validate dict has required keys
+        required_summary_keys = ['id', 'LLR', 'weight', 'adjusted_LLR']
+        missing_summary_keys = [k for k in required_summary_keys if k not in summary_item]
+        assert not missing_summary_keys, f"evidence_summary[{summary_idx}] missing keys: {missing_summary_keys}"
 
-        # VALIDATE evidence_summary structure (NEW)
-        if 'evidence_summary' in result:
-            for summary_idx, summary_item in enumerate(result['evidence_summary']):
-                if not isinstance(summary_item, dict):
-                    logger.error(
-                        f"evidence_summary[{summary_idx}] is not a dict: {type(summary_item)}. "
-                        f"This will cause 'list indices must be integers' error!"
-                    )
-                    # Try to convert
-                    if hasattr(summary_item, 'model_dump'):
-                        result['evidence_summary'][summary_idx] = summary_item.model_dump()
-                    elif hasattr(summary_item, 'dict'):
-                        result['evidence_summary'][summary_idx] = summary_item.dict()
-                    else:
-                        # Create minimal dict
-                        result['evidence_summary'][summary_idx] = {
-                            'id': f"evidence_{summary_idx}",
-                            'LLR': 0.0,
-                            'weight': 0.0,
-                            'adjusted_LLR': 0.0
-                        }
-
-                # Validate dict has required keys
-                summary_dict = result['evidence_summary'][summary_idx]
-                required_summary_keys = ['id', 'LLR', 'weight', 'adjusted_LLR']
-                missing_summary_keys = [k for k in required_summary_keys if k not in summary_dict]
-                if missing_summary_keys:
-                    logger.warning(
-                        f"evidence_summary[{summary_idx}] missing keys: {missing_summary_keys}"
-                    )
-                    # Add defaults
-                    summary_dict.setdefault('id', f"evidence_{summary_idx}")
-                    summary_dict.setdefault('LLR', 0.0)
-                    summary_dict.setdefault('weight', 1.0)
-                    summary_dict.setdefault('adjusted_LLR', 0.0)
-
-        logger.info(f"✅ Bayesian result: p={result['p_bayesian']:.2%}")
-
-        return result
-
-    except Exception as e:
-        logger.error(f"❌ Bayesian calculation failed: {e}", exc_info=True)
-        # Return safe fallback
-        return {
-            'error': str(e),
-            'p_bayesian': prior_p,
-            'log_odds_prior': 0.0,
-            'log_odds_posterior': 0.0,
-            'evidence_summary': [],
-            'correlation_adjustments': {'method': 'error', 'details': str(e)}
-        }
+    logger.info(f"✅ Bayesian result: p={result['p_bayesian']:.2%}")
+    
+    log_bayesian_result(
+        "bayesian_calculate_tool",
+        prior_p,
+        result['p_bayesian'],
+        len(normalized_items)
+    )
+    log_tool_success("bayesian_calculate_tool", {
+        "p_bayesian": result['p_bayesian'],
+        "evidence_count": len(normalized_items),
+        "log_odds_posterior": result.get('log_odds_posterior', 0.0)
+    })
+    
+    return result
 
 
 @tool
@@ -224,104 +191,28 @@ async def sensitivity_analysis_tool(
         >>> for r in results:
         ...     print(f"{r['scenario']}: {r['p']:.1%}")
     """
-    try:
-        logger.info(f"📊 Sensitivity analysis: {len(evidence_items)} evidence items")
+    assert 0.0 <= prior_p <= 1.0, f"Prior probability must be between 0 and 1, got {prior_p}"
+    assert evidence_items, "Evidence items list required"
+    assert isinstance(evidence_items, list), "Evidence items must be a list"
+    
+    log_tool_start("sensitivity_analysis_tool", {"prior_p": prior_p, "evidence_count": len(evidence_items), "scenarios": len(scenarios) if scenarios else "default"})
+    logger.info(f"📊 Sensitivity analysis: {len(evidence_items)} evidence items")
 
-        calculator = get_calculator()
+    calculator = get_calculator()
 
-        # Run sensitivity analysis
-        results = calculator.sensitivity_analysis(
-            prior_p=prior_p,
-            evidence_items=evidence_items
-        )
+    # Run sensitivity analysis
+    results = calculator.sensitivity_analysis(
+        prior_p=prior_p,
+        evidence_items=evidence_items
+    )
 
-        logger.info(f"✅ Sensitivity analysis complete: {len(results)} scenarios")
-
-        return results
-
-    except Exception as e:
-        logger.error(f"❌ Sensitivity analysis failed: {e}")
-        return [{'scenario': 'error', 'p': prior_p, 'error': str(e)}]
-
-
-@tool
-async def correlation_detector_tool(
-    evidence_items: List[Dict[str, Any]],
-    similarity_threshold: float = 0.7
-) -> List[List[str]]:
-    """
-    Detect correlated evidence clusters based on content similarity.
-
-    Use this to identify evidence items that likely share underlying sources
-    or information, which should be downweighted to avoid double-counting.
-
-    Args:
-        evidence_items: Evidence items with 'id', 'content', 'url'
-        similarity_threshold: Cosine similarity threshold for correlation (0-1)
-
-    Returns:
-        List of evidence ID clusters that are highly correlated
-
-    Example:
-        >>> clusters = await correlation_detector_tool(evidence_items)
-        >>> print(f"Found {len(clusters)} correlated clusters")
-    """
-    try:
-        logger.info(f"🔗 Detecting correlations in {len(evidence_items)} items")
-
-        # Simplified correlation detection (in production, use embeddings)
-        clusters = []
-
-        # Group by domain (simple heuristic)
-        domain_groups = {}
-        for item in evidence_items:
-            url = item.get('url', '')
-            domain = url.split('/')[2] if '/' in url and len(url.split('/')) > 2 else 'unknown'
-
-            if domain not in domain_groups:
-                domain_groups[domain] = []
-            # Use id if available, otherwise use title or a default
-            evidence_id = item.get('id', item.get('title', f"evidence_{len(domain_groups[domain])}"))
-            domain_groups[domain].append(evidence_id)
-
-        # Any domain with 2+ items is a potential cluster
-        for domain, ids in domain_groups.items():
-            if len(ids) >= 2:
-                clusters.append(ids)
-
-        # Also group by content similarity (simple keyword matching)
-        content_groups = {}
-        for i, item1 in enumerate(evidence_items):
-            for j, item2 in enumerate(evidence_items[i+1:], i+1):
-                content1 = item1.get('content', item1.get('title', '')).lower()
-                content2 = item2.get('content', item2.get('title', '')).lower()
-
-                # Simple similarity: check for common words
-                words1 = set(content1.split())
-                words2 = set(content2.split())
-
-                if words1 and words2:
-                    similarity = len(words1.intersection(words2)) / len(words1.union(words2))
-                    if similarity > similarity_threshold:
-                        id1 = item1.get('id', item1.get('title', f"evidence_{i}"))
-                        id2 = item2.get('id', item2.get('title', f"evidence_{j}"))
-                        cluster_key = tuple(sorted([id1, id2]))
-
-                        if cluster_key not in content_groups:
-                            content_groups[cluster_key] = [id1, id2]
-
-        # Add content-based clusters
-        for cluster_ids in content_groups.values():
-            if len(cluster_ids) >= 2:
-                clusters.append(cluster_ids)
-
-        logger.info(f"✅ Found {len(clusters)} correlation clusters")
-
-        return clusters
-
-    except Exception as e:
-        logger.error(f"❌ Correlation detection failed: {e}")
-        return []
+    assert results, "Sensitivity analysis must return results"
+    assert isinstance(results, list), "Sensitivity results must be a list"
+    
+    logger.info(f"✅ Sensitivity analysis complete: {len(results)} scenarios")
+    log_tool_success("sensitivity_analysis_tool", {"scenarios_count": len(results), "prior_p": prior_p})
+    
+    return results
 
 
 @tool
@@ -361,38 +252,36 @@ async def store_critique_results_tool(
         ...     analysis_process="Analyzed 15 evidence items, found 2 gaps"
         ... )
     """
-    try:
-        logger.info(
-            f"📥 Storing critique results: {len(missing_topics)} gaps, "
-            f"{len(correlation_warnings)} correlations, {len(follow_up_search_seeds)} follow-ups"
-        )
+    assert isinstance(missing_topics, list), "missing_topics must be a list"
+    assert isinstance(over_represented_sources, list), "over_represented_sources must be a list"
+    assert isinstance(follow_up_search_seeds, list), "follow_up_search_seeds must be a list"
+    assert isinstance(duplicate_clusters, list), "duplicate_clusters must be a list"
+    assert isinstance(correlation_warnings, list), "correlation_warnings must be a list"
+    assert analysis_process and isinstance(analysis_process, str), "analysis_process must be non-empty string"
+    
+    logger.info(
+        f"📥 Storing critique results: {len(missing_topics)} gaps, "
+        f"{len(correlation_warnings)} correlations, {len(follow_up_search_seeds)} follow-ups"
+    )
 
-        # Package results for return
-        results = {
-            'missing_topics': missing_topics or [],
-            'over_represented_sources': over_represented_sources or [],
-            'follow_up_search_seeds': follow_up_search_seeds or [],
-            'duplicate_clusters': duplicate_clusters or [],
-            'correlation_warnings': correlation_warnings or [],
-            'analysis_process': analysis_process or 'Critique completed'
-        }
+    # Package results for return
+    results = {
+        'missing_topics': missing_topics,
+        'over_represented_sources': over_represented_sources,
+        'follow_up_search_seeds': follow_up_search_seeds,
+        'duplicate_clusters': duplicate_clusters,
+        'correlation_warnings': correlation_warnings,
+        'analysis_process': analysis_process
+    }
 
-        logger.info(f"✅ Critique results packaged for storage")
+    logger.info(f"✅ Critique results packaged for storage")
 
-        # Return results wrapped in a structure that handle_tool_message can extract
-        return {
-            'status': 'success',
-            'results_stored': results,
-            'message': f"Critique analysis stored: {len(missing_topics)} gaps, {len(correlation_warnings)} correlation warnings"
-        }
-
-    except Exception as e:
-        logger.error(f"❌ Store critique results failed: {e}")
-        return {
-            'status': 'error',
-            'error': str(e),
-            'results_stored': {}
-        }
+    # Return results wrapped in a structure that handle_tool_message can extract
+    return {
+        'status': 'success',
+        'results_stored': results,
+        'message': f"Critique analysis stored: {len(missing_topics)} gaps, {len(correlation_warnings)} correlation warnings"
+    }
 
 
 @tool
@@ -417,37 +306,35 @@ async def validate_llr_calibration_tool(
         >>> if not validation['is_valid']:
         ...     print(validation['feedback'])
     """
-    try:
-        # Calibration ranges from CLAUDE.md
-        ranges = {
-            'primary': (1.0, 3.0),
-            'high_quality_secondary': (0.3, 1.0),
-            'secondary': (0.1, 0.5),
-            'weak': (0.01, 0.2)
-        }
+    assert isinstance(llr, (int, float)), f"LLR must be numeric, got {type(llr)}"
+    assert source_type in {'primary', 'high_quality_secondary', 'secondary', 'weak'}, f"Invalid source_type: {source_type}"
+    
+    # Calibration ranges from CLAUDE.md
+    ranges = {
+        'primary': (1.0, 3.0),
+        'high_quality_secondary': (0.3, 1.0),
+        'secondary': (0.1, 0.5),
+        'weak': (0.01, 0.2)
+    }
 
-        expected_range = ranges.get(source_type, (0.1, 0.5))
-        min_llr, max_llr = expected_range
+    expected_range = ranges[source_type]
+    min_llr, max_llr = expected_range
 
-        abs_llr = abs(llr)
-        is_valid = min_llr <= abs_llr <= max_llr
+    abs_llr = abs(llr)
+    is_valid = min_llr <= abs_llr <= max_llr
 
-        if is_valid:
-            feedback = f"LLR {llr:+.2f} is properly calibrated for {source_type} source"
-        else:
-            feedback = (
-                f"LLR {llr:+.2f} is outside expected range [{min_llr}, {max_llr}] "
-                f"for {source_type} source. Consider adjusting."
-            )
+    if is_valid:
+        feedback = f"LLR {llr:+.2f} is properly calibrated for {source_type} source"
+    else:
+        feedback = (
+            f"LLR {llr:+.2f} is outside expected range [{min_llr}, {max_llr}] "
+            f"for {source_type} source. Consider adjusting."
+        )
 
-        return {
-            'is_valid': is_valid,
-            'llr': llr,
-            'source_type': source_type,
-            'expected_range': expected_range,
-            'feedback': feedback
-        }
-
-    except Exception as e:
-        logger.error(f"❌ LLR validation failed: {e}")
-        return {'is_valid': False, 'error': str(e)}
+    return {
+        'is_valid': is_valid,
+        'llr': llr,
+        'source_type': source_type,
+        'expected_range': expected_range,
+        'feedback': feedback
+    }
