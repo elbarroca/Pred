@@ -1,15 +1,40 @@
 from .polymarket import PolymarketClient
 
-# Optional Kalshi import (may not exist yet)
+# Optional platform clients
 try:
     from .kalshi import KalshiClient
 except ImportError:
     KalshiClient = None
 
-from .valyu import ValyuResearchClient
-from .web3.wallet_tracker import WalletTrackerClient
-from .trade.insider_detector import InsiderDetectorClient
-from .web3.alchemy import AlchemyWebhooksClient
+try:
+    from .manifold import ManifoldClient
+except ImportError:
+    ManifoldClient = None
+
+try:
+    from .market_enricher import MarketEnricher
+except ImportError:
+    MarketEnricher = None
+
+try:
+    from .valyu import ValyuResearchClient
+except ImportError:
+    ValyuResearchClient = None
+
+try:
+    from .web3.wallet_tracker import WalletTrackerClient
+except ImportError:
+    WalletTrackerClient = None
+
+try:
+    from .trade.insider_detector import InsiderDetectorClient
+except ImportError:
+    InsiderDetectorClient = None
+
+try:
+    from .web3.alchemy import AlchemyWebhooksClient
+except ImportError:
+    AlchemyWebhooksClient = None
 
 # Optional imports for webhook providers
 try:
@@ -22,12 +47,21 @@ try:
 except ImportError:
     MoralisStreamsClient = None
 
-from .trade.trader_analytics import TraderAnalyticsClient
-from .trade.trade_executor import TradeExecutor
+try:
+    from .trade.trader_analytics import TraderAnalyticsClient
+except ImportError:
+    TraderAnalyticsClient = None
+
+try:
+    from .trade.trade_executor import TradeExecutor
+except ImportError:
+    TradeExecutor = None
 
 __all__ = [
     "PolymarketClient",
     "KalshiClient",
+    "ManifoldClient",
+    "MarketEnricher",
     "ValyuResearchClient",
     "WalletTrackerClient",
     "InsiderDetectorClient",

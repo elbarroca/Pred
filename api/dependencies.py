@@ -9,7 +9,7 @@ from fastapi import Depends
 from clients.web3.wallet_tracker import WalletTrackerClient
 from agents.copy_trading_agent import CopyTradingAgent
 from betting.copy_trading import TradeSignalProcessor
-from database.client import SupabaseClient
+from database.client import MarketDatabase
 from clients.trade.trade_executor import TradeExecutor
 from clients.polymarket import PolymarketClient
 from config.settings import settings
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 _wallet_tracker: WalletTrackerClient | None = None
 _copy_agent: CopyTradingAgent | None = None
 _trade_processor: TradeSignalProcessor | None = None
-_db_client: SupabaseClient | None = None
+_db_client: MarketDatabase | None = None
 _trade_executor: TradeExecutor | None = None
 _polymarket_client: PolymarketClient | None = None
 
@@ -49,7 +49,7 @@ def initialize_dependencies():
     )
     
     # Initialize database client
-    _db_client = SupabaseClient()
+    _db_client = MarketDatabase(settings.SUPABASE_URL, settings.SUPABASE_KEY)
     
     # Initialize Polymarket client
     _polymarket_client = PolymarketClient()
@@ -91,7 +91,7 @@ def get_trade_processor() -> TradeSignalProcessor:
     return _trade_processor
 
 
-def get_db_client() -> SupabaseClient:
+def get_db_client() -> MarketDatabase:
     """Get database client instance"""
     if _db_client is None:
         raise RuntimeError("Dependencies not initialized. Call initialize_dependencies() first.")
@@ -116,7 +116,7 @@ def get_polymarket_client() -> PolymarketClient:
 WalletTrackerDep = Annotated[WalletTrackerClient, Depends(get_wallet_tracker)]
 CopyAgentDep = Annotated[CopyTradingAgent, Depends(get_copy_agent)]
 TradeProcessorDep = Annotated[TradeSignalProcessor, Depends(get_trade_processor)]
-DBClientDep = Annotated[SupabaseClient, Depends(get_db_client)]
+DBClientDep = Annotated[MarketDatabase, Depends(get_db_client)]
 TradeExecutorDep = Annotated[TradeExecutor, Depends(get_trade_executor)]
 PolymarketClientDep = Annotated[PolymarketClient, Depends(get_polymarket_client)]
 

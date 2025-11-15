@@ -45,7 +45,7 @@ cryptography==44.0.0          # RSA signing for Kalshi API authentication
 # -----------------------------------------------------------------------------
 # Database - Supabase/PostgreSQL
 # -----------------------------------------------------------------------------
-supabase==2.10.0              # Supabase Python client
+supabase==2.3.0              # Supabase Python client
 asyncpg==0.30.0               # Fast async PostgreSQL driver
 psycopg2-binary==2.9.10       # PostgreSQL adapter (binary for ease)
 sqlalchemy==2.0.35            # SQL toolkit (optional for ORM)
@@ -78,7 +78,6 @@ lxml==5.3.0                   # Fast XML/HTML parser
 # -----------------------------------------------------------------------------
 # Dashboard & Visualization
 # -----------------------------------------------------------------------------
-streamlit==1.28.2             # Interactive dashboard framework
 plotly==5.18.0                # Interactive charts and visualizations
 
 # -----------------------------------------------------------------------------

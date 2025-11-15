@@ -3,7 +3,7 @@ Trader discovery endpoints
 """
 import logging
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from .database.client import SupabaseClient
+from database.client import MarketDatabase
 
 from api.dependencies import get_db_client
 
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/discovery", tags=["discovery"])
 @router.post("/scan")
 async def trigger_discovery_scan(
     background_tasks: BackgroundTasks,
-    db_client: SupabaseClient = Depends(get_db_client)
+    db_client: MarketDatabase = Depends(get_db_client)
 ):
     """
     Trigger a trader discovery scan.

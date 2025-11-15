@@ -1,644 +1,233 @@
 """
-Supabase Database Client for POLYSEER
-Handles all database operations with proper error handling and type safety
+Async database client for Supabase with prediction market data persistence.
 """
-from typing import List, Dict, Any, Optional
+
+import asyncio
+import json
+from typing import List, Optional, Dict, Any
 from datetime import datetime
-from uuid import UUID
-from config import settings
+
 from supabase import create_client, Client
-import os
+from .schema import Event, Market, ScanSession
 
 
-class SupabaseClient:
-    """Client for Supabase database operations"""
+class MarketDatabase:
+    """Async database client for storing prediction market data.
+    
+    Provides high-level async interface for persisting events, markets, and scan sessions
+    to Supabase with batch support and thread-safe operations.
+    """
 
-    def __init__(self):
-        """Initialize Supabase client"""
-        try:
-
-            self.client: Client = create_client(
-                settings.SUPABASE_URL,
-                settings.SUPABASE_KEY
-            )
-        except ImportError:
-            print("Warning: Supabase library not installed. Install with: pip install supabase")
-            self.client = None
-
-    # ========================================================================
-    # MARKETS
-    # ========================================================================
-
-    async def create_market(
-        self,
-        provider: str,
-        market_slug: str,
-        question: str,
-        **kwargs
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Create a new market entry
-
+    def __init__(self, supabase_url: str, supabase_key: str):
+        """Initialize database client with Supabase credentials.
+        
         Args:
-            provider: Platform name (polymarket, kalshi, calci)
-            market_slug: Unique market identifier
-            question: Market question text
-            **kwargs: Additional fields (description, category, end_date, etc.)
-
-        Returns:
-            Created market dict or None
+            supabase_url: Supabase project URL
+            supabase_key: Supabase API key
+            
+        Raises:
+            AssertionError: If URL or key is empty
         """
-        if not self.client:
-            return None
+        assert supabase_url, "supabase_url must not be empty"
+        assert supabase_key, "supabase_key must not be empty"
+        
+        self.supabase: Client = create_client(supabase_url, supabase_key)
+        self._lock = asyncio.Lock()
 
-        data = {
-            "provider": provider,
-            "market_slug": market_slug,
-            "question": question,
-            **kwargs
+    @staticmethod
+    def _serialize(obj: Any) -> Optional[str]:
+        """Serialize object to JSON if not None.
+        
+        Args:
+            obj: Object to serialize
+            
+        Returns:
+            JSON string or None
+        """
+        return json.dumps(obj) if obj else None
+
+    def _event_to_dict(self, event: Event) -> Dict[str, Any]:
+        """Convert Event schema to database record.
+        
+        Args:
+            event: Event object
+            
+        Returns:
+            Dictionary ready for database insertion
+        """
+        assert event.id, "Event must have id"
+        assert event.platform, "Event must have platform"
+        
+        return {
+            "id": event.id,
+            "platform": event.platform,
+            "title": event.title,
+            "description": event.description,
+            "category": event.category,
+            "status": event.status,
+            "start_date": event.start_date,
+            "end_date": event.end_date,
+            "tags": self._serialize(event.tags),
+            "market_count": event.market_count,
+            "total_liquidity": event.total_liquidity,
+            "created_at": event.created_at,
+            "updated_at": event.updated_at,
+            "raw_data": self._serialize(event.raw_data),
         }
 
-        try:
-            result = self.client.table("markets").insert(data).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error creating market: {e}")
-            return None
-
-    async def get_market_by_slug(
-        self,
-        provider: str,
-        market_slug: str
-    ) -> Optional[Dict[str, Any]]:
-        """Get market by provider and slug"""
-        if not self.client:
-            return None
-
-        try:
-            result = self.client.table("markets").select("*").eq(
-                "provider", provider
-            ).eq("market_slug", market_slug).execute()
-
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error fetching market: {e}")
-            return None
-
-    async def upsert_market(
-        self,
-        provider: str,
-        market_slug: str,
-        question: str,
-        **kwargs
-    ) -> Optional[Dict[str, Any]]:
-        """Insert or update market"""
-        if not self.client:
-            return None
-
-        data = {
-            "provider": provider,
-            "market_slug": market_slug,
-            "question": question,
-            **kwargs
+    def _market_to_dict(self, market: Market) -> Dict[str, Any]:
+        """Convert Market schema to database record.
+        
+        Args:
+            market: Market object
+            
+        Returns:
+            Dictionary ready for database insertion
+        """
+        assert market.id, "Market must have id"
+        assert market.platform, "Market must have platform"
+        
+        return {
+            "id": market.id,
+            "platform": market.platform,
+            "event_id": market.event_id,
+            "event_title": market.event_title,
+            "title": market.title,
+            "description": market.description,
+            "category": market.category,
+            "tags": self._serialize(market.tags),
+            "status": market.status,
+            "p_yes": market.p_yes,
+            "p_no": market.p_no,
+            "bid": market.bid,
+            "ask": market.ask,
+            "liquidity": market.liquidity,
+            "volume_24h": market.volume_24h,
+            "total_volume": market.total_volume,
+            "num_outcomes": market.num_outcomes,
+            "created_at": market.created_at,
+            "updated_at": market.updated_at,
+            "close_date": market.close_date,
+            "raw_data": self._serialize(market.raw_data),
         }
 
-        try:
-            result = self.client.table("markets").upsert(
-                data,
-                on_conflict="provider,market_slug"
-            ).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error upserting market: {e}")
-            return None
+    async def save_event(self, event: Event) -> bool:
+        """Save a single event to the database.
+        
+        Args:
+            event: Event object to persist
+            
+        Returns:
+            True if upsert succeeded, False otherwise
+        """
+        async with self._lock:
+            data = self._event_to_dict(event)
+            result = self.supabase.table("events").upsert(data).execute()
+            return len(result.data) > 0
 
-    # ========================================================================
-    # MARKET PRICES (Time-Series)
-    # ========================================================================
+    async def save_market(self, market: Market) -> bool:
+        """Save a single market to the database.
+        
+        Args:
+            market: Market object to persist
+            
+        Returns:
+            True if upsert succeeded, False otherwise
+        """
+        async with self._lock:
+            data = self._market_to_dict(market)
+            result = self.supabase.table("markets").upsert(data).execute()
+            return len(result.data) > 0
 
-    async def insert_price_snapshot(
-        self,
-        market_id: UUID,
-        price: float,
-        implied_prob: float,
-        volume: Optional[float] = None,
-        liquidity: Optional[float] = None,
-        source: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
-        """Insert a price snapshot"""
-        if not self.client:
-            return None
+    async def save_events_batch(self, events: List[Event]) -> int:
+        """Save multiple events in a batch.
+        
+        Args:
+            events: List of Event objects to persist
+            
+        Returns:
+            Count of successfully saved events
+        """
+        assert events, "events list must not be empty"
+        
+        saved_count = 0
+        for event in events:
+            if await self.save_event(event):
+                saved_count += 1
+        return saved_count
 
+    async def save_markets_batch(self, markets: List[Market]) -> int:
+        """Save multiple markets in a batch.
+        
+        Args:
+            markets: List of Market objects to persist
+            
+        Returns:
+            Count of successfully saved markets
+        """
+        assert markets, "markets list must not be empty"
+        
+        saved_count = 0
+        for market in markets:
+            if await self.save_market(market):
+                saved_count += 1
+        return saved_count
+
+    async def create_scan_session(self, platforms: List[str]) -> Optional[str]:
+        """Create a new scan session record.
+        
+        Args:
+            platforms: List of platforms scanned
+            
+        Returns:
+            Session ID if created, None otherwise
+        """
+        assert platforms, "platforms list must not be empty"
+        
         data = {
-            "market_id": str(market_id),
-            "price": price,
-            "implied_prob": implied_prob,
-            "volume": volume,
-            "liquidity": liquidity,
-            "source": source,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-
-        try:
-            result = self.client.table("market_prices").insert(data).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error inserting price: {e}")
-            return None
-
-    # ========================================================================
-    # RESEARCH PLANS
-    # ========================================================================
-
-    async def create_research_plan(
-        self,
-        market_id: UUID,
-        workflow_id: str,
-        p0_prior: float,
-        prior_justification: str,
-        subclaims: List[Dict[str, Any]],
-        search_seeds: Dict[str, List[str]],
-        key_variables: List[str],
-        decision_criteria: List[str]
-    ) -> Optional[Dict[str, Any]]:
-        """Create research plan from Planner Agent output"""
-        if not self.client:
-            return None
-
-        data = {
-            "market_id": str(market_id),
-            "workflow_id": workflow_id,
-            "p0_prior": p0_prior,
-            "prior_justification": prior_justification,
-            "subclaims_json": subclaims,
-            "search_seeds_json": search_seeds,
-            "key_variables": key_variables,
-            "decision_criteria": decision_criteria
-        }
-
-        try:
-            result = self.client.table("research_plans").insert(data).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error creating research plan: {e}")
-            return None
-
-    # ========================================================================
-    # EVIDENCE
-    # ========================================================================
-
-    async def insert_evidence_batch(
-        self,
-        research_plan_id: UUID,
-        evidence_items: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Insert multiple evidence items at once"""
-        if not self.client:
-            return []
-
-        # Prepare data
-        data = []
-        for item in evidence_items:
-            data.append({
-                "research_plan_id": str(research_plan_id),
-                **item
-            })
-
-        try:
-            result = self.client.table("evidence").insert(data).execute()
-            return result.data if result.data else []
-        except Exception as e:
-            print(f"Error inserting evidence batch: {e}")
-            return []
-
-    # ========================================================================
-    # BAYESIAN ANALYSIS
-    # ========================================================================
-
-    async def create_bayesian_analysis(
-        self,
-        research_plan_id: UUID,
-        p0: float,
-        log_odds_prior: float,
-        log_odds_posterior: float,
-        p_bayesian: float,
-        p_neutral: float,
-        evidence_summary: List[Dict[str, Any]],
-        correlation_adjustments: Dict[str, Any],
-        sensitivity_analysis: List[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
-        """Create Bayesian analysis from Analyst Agent output"""
-        if not self.client:
-            return None
-
-        data = {
-            "research_plan_id": str(research_plan_id),
-            "p0": p0,
-            "log_odds_prior": log_odds_prior,
-            "log_odds_posterior": log_odds_posterior,
-            "p_bayesian": p_bayesian,
-            "p_neutral": p_neutral,
-            "evidence_summary_json": evidence_summary,
-            "correlation_adjustments_json": correlation_adjustments,
-            "sensitivity_analysis_json": sensitivity_analysis
-        }
-
-        try:
-            result = self.client.table("bayesian_analysis").insert(data).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error creating Bayesian analysis: {e}")
-            return None
-
-    # ========================================================================
-    # ARBITRAGE OPPORTUNITIES
-    # ========================================================================
-
-    async def insert_arbitrage_opportunities(
-        self,
-        market_id: UUID,
-        analysis_id: UUID,
-        opportunities: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Insert arbitrage opportunities"""
-        if not self.client:
-            return []
-
-        data = []
-        for opp in opportunities:
-            data.append({
-                "market_id": str(market_id),
-                "analysis_id": str(analysis_id),
-                **opp
-            })
-
-        try:
-            result = self.client.table("arbitrage_opportunities").insert(data).execute()
-            return result.data if result.data else []
-        except Exception as e:
-            print(f"Error inserting arbitrage opportunities: {e}")
-            return []
-
-    # ========================================================================
-    # WORKFLOW EXECUTIONS
-    # ========================================================================
-
-    async def create_workflow_execution(
-        self,
-        workflow_id: str,
-        market_id: Optional[UUID] = None
-    ) -> Optional[Dict[str, Any]]:
-        """Create a new workflow execution record"""
-        if not self.client:
-            return None
-
-        data = {
-            "workflow_id": workflow_id,
-            "market_id": str(market_id) if market_id else None,
+            "started_at": datetime.utcnow().isoformat(),
+            "platforms_scanned": json.dumps(platforms),
             "status": "running"
         }
+        result = self.supabase.table("scan_sessions").insert(data).execute()
+        return result.data[0]["id"] if result.data else None
 
-        try:
-            result = self.client.table("workflow_executions").insert(data).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error creating workflow execution: {e}")
-            return None
+    async def update_scan_session(self, session_id: str, **updates) -> None:
+        """Update a scan session with completion stats.
+        
+        Args:
+            session_id: ID of scan session to update
+            **updates: Fields to update
+        """
+        assert session_id, "session_id must not be empty"
+        assert updates, "updates must contain at least one field"
+        
+        updates["db_updated_at"] = datetime.utcnow().isoformat()
+        self.supabase.table("scan_sessions").update(updates).eq("id", session_id).execute()
 
-    async def update_workflow_execution(
-        self,
-        workflow_id: str,
-        status: str,
-        **kwargs
-    ) -> Optional[Dict[str, Any]]:
-        """Update workflow execution"""
-        if not self.client:
-            return None
+    async def get_recent_markets(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get recently added markets for verification.
+        
+        Args:
+            limit: Maximum number of markets to retrieve (default: 100)
+            
+        Returns:
+            List of market records ordered by creation date (newest first)
+        """
+        assert limit > 0, "limit must be positive"
+        
+        result = (self.supabase.table("markets")
+                 .select("*")
+                 .order("created_at", desc=True)
+                 .limit(limit)
+                 .execute())
+        return result.data if result.data else []
 
-        data = {"status": status, **kwargs}
-
-        if status in ["completed", "failed", "cancelled"]:
-            data["completed_at"] = datetime.utcnow().isoformat()
-
-        try:
-            result = self.client.table("workflow_executions").update(data).eq(
-                "workflow_id", workflow_id
-            ).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error updating workflow execution: {e}")
-            return None
-
-    # ========================================================================
-    # VIEWS
-    # ========================================================================
-
-    async def get_latest_market_analysis(
-        self,
-        market_id: Optional[UUID] = None,
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
-        """Query latest_market_analysis view"""
-        if not self.client:
-            return []
-
-        try:
-            query = self.client.table("latest_market_analysis").select("*")
-
-            if market_id:
-                query = query.eq("market_id", str(market_id))
-
-            result = query.limit(limit).execute()
-            return result.data if result.data else []
-        except Exception as e:
-            print(f"Error querying latest market analysis: {e}")
-            return []
-
-    async def get_best_arbitrage_opportunities(
-        self,
-        min_edge: float = 0.02,
-        limit: int = 20
-    ) -> List[Dict[str, Any]]:
-        """Query best_arbitrage_opportunities view"""
-        if not self.client:
-            return []
-
-        try:
-            result = self.client.table("best_arbitrage_opportunities").select("*").gte(
-                "edge", min_edge
-            ).limit(limit).execute()
-
-            return result.data if result.data else []
-        except Exception as e:
-            print(f"Error querying arbitrage opportunities: {e}")
-            return []
-
-    # TRACKED TRADERS
-
-    async def upsert_tracked_trader(
-        self,
-        wallet_address: str,
-        composite_score: float,
-        early_betting_pct: float = 0.0,
-        volume_consistency: float = 0.0,
-        win_rate: float = 0.0,
-        edge_score: float = 0.0,
-        activity_level: float = 0.0,
-        pnl_30d: float = 0.0,
-        pnl_90d: float = 0.0,
-        trade_count: int = 0,
-        sharpe_equivalent: float = 0.0,
-        status: str = "active"
-    ) -> Optional[Dict[str, Any]]:
-        """Insert or update tracked trader"""
-        if not self.client:
-            return None
-
-        data = {
-            "wallet_address": wallet_address.lower(),
-            "composite_score": composite_score,
-            "early_betting_pct": early_betting_pct,
-            "volume_consistency": volume_consistency,
-            "win_rate": win_rate,
-            "edge_score": edge_score,
-            "activity_level": activity_level,
-            "pnl_30d": pnl_30d,
-            "pnl_90d": pnl_90d,
-            "trade_count": trade_count,
-            "sharpe_equivalent": sharpe_equivalent,
-            "status": status
-        }
-
-        try:
-            result = self.client.table("tracked_traders").upsert(
-                data,
-                on_conflict="wallet_address"
-            ).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error upserting tracked trader: {e}")
-            return None
-
-    async def get_tracked_traders(
-        self,
-        status: Optional[str] = None,
-        min_score: Optional[float] = None,
-        limit: int = 100
-    ) -> List[Dict[str, Any]]:
-        """Get tracked traders with optional filters"""
-        if not self.client:
-            return []
-
-        try:
-            query = self.client.table("tracked_traders").select("*")
-
-            if status:
-                query = query.eq("status", status)
-
-            if min_score is not None:
-                query = query.gte("composite_score", min_score)
-
-            result = query.order("composite_score", desc=True).limit(limit).execute()
-            return result.data if result.data else []
-        except Exception as e:
-            print(f"Error fetching tracked traders: {e}")
-            return []
-
-    async def insert_trader_activity(
-        self,
-        wallet_address: str,
-        score_snapshot: float,
-        trade_count_snapshot: int = 0,
-        pnl_snapshot: float = 0.0,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> Optional[Dict[str, Any]]:
-        """Insert trader activity snapshot"""
-        if not self.client:
-            return None
-
-        data = {
-            "wallet_address": wallet_address.lower(),
-            "score_snapshot": score_snapshot,
-            "trade_count_snapshot": trade_count_snapshot,
-            "pnl_snapshot": pnl_snapshot,
-            "metadata": metadata or {}
-        }
-
-        try:
-            result = self.client.table("trader_activity").insert(data).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error inserting trader activity: {e}")
-            return None
-
-    async def insert_onchain_trade(
-        self,
-        transaction_hash: str,
-        wallet_address: str,
-        market_slug: Optional[str] = None,
-        token_address: Optional[str] = None,
-        token_id: Optional[str] = None,
-        side: str = "BUY",
-        size_usd: float = 0.0,
-        price: float = 0.0,
-        timestamp: Optional[datetime] = None,
-        block_number: Optional[int] = None,
-        market_created_at: Optional[datetime] = None,
-        raw_event_data: Optional[Dict[str, Any]] = None
-    ) -> Optional[Dict[str, Any]]:
-        """Insert on-chain trade record"""
-        if not self.client:
-            return None
-
-        data = {
-            "transaction_hash": transaction_hash,
-            "wallet_address": wallet_address.lower(),
-            "market_slug": market_slug,
-            "token_address": token_address,
-            "token_id": token_id,
-            "side": side,
-            "size_usd": size_usd,
-            "price": price,
-            "timestamp": (timestamp or datetime.utcnow()).isoformat(),
-            "block_number": block_number,
-            "market_created_at": market_created_at.isoformat() if market_created_at else None,
-            "raw_event_data": raw_event_data or {}
-        }
-
-        try:
-            result = self.client.table("onchain_trades").upsert(
-                data,
-                on_conflict="transaction_hash"
-            ).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error inserting onchain trade: {e}")
-            return None
-
-    # ========================================================================
-    # PAPER TRADING
-    # ========================================================================
-
-    async def insert_paper_trading_log(
-        self,
-        signal_id: str,
-        wallet_address: str,
-        market_slug: str,
-        side: str,
-        size_usd: float,
-        expected_price: float,
-        fill_price: float,
-        slippage_bps: int = 0,
-        status: str = "filled",
-        pnl_realized: Optional[float] = None,
-        pnl_unrealized: float = 0.0,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> Optional[Dict[str, Any]]:
-        """Insert paper trading log entry"""
-        if not self.client:
-            return None
-
-        data = {
-            "signal_id": signal_id,
-            "wallet_address": wallet_address.lower(),
-            "market_slug": market_slug,
-            "side": side,
-            "size_usd": size_usd,
-            "expected_price": expected_price,
-            "fill_price": fill_price,
-            "slippage_bps": slippage_bps,
-            "status": status,
-            "pnl_realized": pnl_realized,
-            "pnl_unrealized": pnl_unrealized,
-            "metadata": metadata or {}
-        }
-
-        try:
-            result = self.client.table("paper_trading_logs").insert(data).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error inserting paper trading log: {e}")
-            return None
-
-    async def upsert_paper_trading_summary(
-        self,
-        date: datetime,
-        total_trades: int = 0,
-        filled_trades: int = 0,
-        rejected_trades: int = 0,
-        total_pnl: float = 0.0,
-        realized_pnl: float = 0.0,
-        unrealized_pnl: float = 0.0,
-        sharpe_ratio: Optional[float] = None,
-        sortino_ratio: Optional[float] = None,
-        max_drawdown: Optional[float] = None,
-        win_rate: float = 0.0,
-        total_volume_usd: float = 0.0,
-        avg_trade_size_usd: float = 0.0,
-        avg_slippage_bps: float = 0.0,
-        max_slippage_bps: int = 0
-    ) -> Optional[Dict[str, Any]]:
-        """Insert or update paper trading daily summary"""
-        if not self.client:
-            return None
-
-        data = {
-            "date": date.date().isoformat() if isinstance(date, datetime) else date,
-            "total_trades": total_trades,
-            "filled_trades": filled_trades,
-            "rejected_trades": rejected_trades,
-            "total_pnl": total_pnl,
-            "realized_pnl": realized_pnl,
-            "unrealized_pnl": unrealized_pnl,
-            "sharpe_ratio": sharpe_ratio,
-            "sortino_ratio": sortino_ratio,
-            "max_drawdown": max_drawdown,
-            "win_rate": win_rate,
-            "total_volume_usd": total_volume_usd,
-            "avg_trade_size_usd": avg_trade_size_usd,
-            "avg_slippage_bps": avg_slippage_bps,
-            "max_slippage_bps": max_slippage_bps
-        }
-
-        try:
-            result = self.client.table("paper_trading_summary").upsert(
-                data,
-                on_conflict="date"
-            ).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error upserting paper trading summary: {e}")
-            return None
-
-    async def get_paper_trading_logs(
-        self,
-        wallet_address: Optional[str] = None,
-        market_slug: Optional[str] = None,
-        limit: int = 100,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
-    ) -> List[Dict[str, Any]]:
-        """Get paper trading logs with optional filters"""
-        if not self.client:
-            return []
-
-        try:
-            query = self.client.table("paper_trading_logs").select("*")
-
-            if wallet_address:
-                query = query.eq("wallet_address", wallet_address.lower())
-
-            if market_slug:
-                query = query.eq("market_slug", market_slug)
-
-            if start_date:
-                query = query.gte("timestamp", start_date.isoformat())
-
-            if end_date:
-                query = query.lte("timestamp", end_date.isoformat())
-
-            result = query.order("timestamp", desc=True).limit(limit).execute()
-            return result.data if result.data else []
-        except Exception as e:
-            print(f"Error fetching paper trading logs: {e}")
-            return []
+    async def get_market_count(self) -> int:
+        """Get total count of markets in database.
+        
+        Returns:
+            Total number of market records
+        """
+        result = self.supabase.table("markets").select("id", count="exact").execute()
+        return result.count or 0

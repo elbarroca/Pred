@@ -7,13 +7,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from config import settings
 import logging
-try:
-    from langchain_valyu import ValyuSearchTool, ValyuContentsTool
-    HAS_VALYU = True
-except ImportError:
-    HAS_VALYU = False
-    ValyuSearchTool = None
-    ValyuContentsTool = None
+from langchain_valyu import ValyuSearchTool, ValyuContentsTool
 
 logger = logging.getLogger(__name__)
 
