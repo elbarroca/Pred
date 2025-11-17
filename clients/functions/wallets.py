@@ -1,18 +1,9 @@
-"""
-Elite Wallet Discovery & Historical Performance Orchestration Engine.
-
-Assertive execution flow:
-1. Discover wallets from closed events intelligence
-2. Sync historical performance data (closed positions)
-3. Compute wallet statistics and eligibility
-4. Deploy wallet scores with tier classification
-5. Deliver comprehensive intelligence reports
-"""
+"""Elite Wallet Discovery & Historical Performance Orchestration Engine."""
 
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from config.settings import Settings
 from database.client import MarketDatabase
@@ -23,16 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class PolymarketWalletCollector:
-    """
-    Elite wallet intelligence orchestration engine.
-
-    Coordinates:
-    1. Wallet discovery from closed event trades
-    2. Historical performance sync (closed positions)
-    3. Global and tag-specific statistics computation
-    4. Composite scoring and tier assignment
-    5. Market concentration analysis
-    """
+    """Elite wallet intelligence orchestration engine."""
 
     def __init__(self):
         self.settings = Settings()
@@ -42,8 +24,543 @@ class PolymarketWalletCollector:
         self.wallet_tracker = WalletTracker(api=self.data_api, gamma=self.gamma)
         self.max_concurrent = 10
 
-    async def _process_batches(self, items: List, process_func: Callable, batch_size: int = None) -> List:
-        """Execute batch processing with assertive parallelism."""
+    async def enrich_unenriched_events(
+        self,
+        max_events: int = 10,
+        is_closed: bool = False,
+        skip_existing_positions: bool = True
+    ) -> Dict[str, Any]:
+        """Master function: Get unenriched events → discover wallets → sync trades/positions → compute stats/scores → mark enriched."""
+        logger.info(f"Starting enrichment for {max_events} events")
+        start_time = datetime.now(timezone.utc)
+        report = {
+            "events_processed": 0,
+            "wallets_discovered": 0,
+            "trades_saved": 0,
+            "positions_synced": 0,
+            "stats_computed": 0,
+            "scores_computed": 0,
+            "total_volume": 0.0,
+            "total_pnl": 0.0,
+            "wallets_skipped": 0
+        }
+
+        # Get unenriched events
+        events = await self._get_unenriched_events(max_events, is_closed)
+        if not events:
+            logger.info("No unenriched events found")
+            return report
+
+        # Load events lookup cache once
+        all_events = await self._fetch_events_from_db(500, is_closed=True)
+        events_by_id, events_by_slug = self.wallet_tracker.build_events_lookup(all_events)
+        self.wallet_tracker.populate_event_slug_cache(events_by_slug)
+
+        # Process each event sequentially
+        for event in events:
+            event_id = event["id"]
+            logger.info(f"Processing event {event_id[:12]}...")
+
+            # Step 1: Discover wallets from event trades + save trades
+            wallets, trades_count = await self._discover_wallets_and_trades(event_id)
+            if not wallets:
+                logger.info(f"No wallets found for event {event_id[:8]}... - marking enriched")
+                await self._mark_event_enriched(event_id, is_closed)
+                report["events_processed"] += 1
+                continue
+
+            report["wallets_discovered"] += len(wallets)
+            report["trades_saved"] += trades_count
+
+            # Step 2: Sync closed positions (skip if exists)
+            wallets_to_sync = await self._filter_wallets_needing_sync(wallets) if skip_existing_positions else list(wallets)
+            if wallets_to_sync:
+                logger.info(f"Syncing positions for {len(wallets_to_sync)} wallets")
+                pos_result = await self.wallet_tracker.sync_wallets_closed_positions_batch(
+                    proxy_wallets=wallets_to_sync,
+                    save_position=self._save_to_db_async("wallet_closed_positions", "proxy_wallet"),
+                    max_concurrency=self.max_concurrent
+                )
+                logger.info(f"Positions synced: {pos_result.get('total_positions', 0)} positions, ${pos_result.get('total_volume', 0):,.2f} volume")
+                report["positions_synced"] += pos_result.get("total_positions", 0)
+                report["total_volume"] += pos_result.get("total_volume", 0.0)
+                report["total_pnl"] += pos_result.get("total_pnl", 0.0)
+                report["wallets_skipped"] += len(wallets) - len(wallets_to_sync)
+            else:
+                logger.info(f"All {len(wallets)} wallets already have positions synced")
+                report["wallets_skipped"] += len(wallets)
+
+            # Step 3: Compute stats
+            logger.info(f"Computing stats for {len(wallets)} wallets")
+            stats_result = await self._compute_stats_batch(wallets, events_by_slug, events_by_id)
+            logger.info(f"Stats computed: {stats_result.get('stats_computed', 0)} wallets")
+            report["stats_computed"] += stats_result.get("stats_computed", 0)
+
+            # Step 4: Compute scores
+            logger.info(f"Computing scores for {len(wallets)} wallets")
+            scores_count = await self._compute_scores_batch(wallets)
+            logger.info(f"Scores computed: {scores_count} wallets")
+            report["scores_computed"] += scores_count
+
+            # Step 5: Mark event as enriched
+            logger.info(f"DB: Marking event {event_id[:12]}... as enriched")
+            await self._mark_event_enriched(event_id, is_closed)
+            report["events_processed"] += 1
+
+        report["duration_seconds"] = (datetime.now(timezone.utc) - start_time).total_seconds()
+        logger.info(f"Enrichment complete: {report['events_processed']} events, {report['wallets_discovered']} wallets")
+        return report
+
+    async def _get_unenriched_events(self, limit: int, is_closed: bool) -> List[Dict[str, Any]]:
+        """Get top N unenriched events ordered by liquidity."""
+        logger.info(f"DB: Querying unenriched events (limit={limit}, closed={is_closed})")
+        table = "events_closed" if is_closed else "events"
+        query = (self.db.supabase.table(table)
+                .select("*")
+                .eq("enriched", False)
+                .gt("market_count", 0)
+                .gt("total_liquidity", 0))
+        if not is_closed:
+            query = query.eq("status", "active")
+        query = query.order("total_liquidity", desc=True).order("market_count", desc=True).limit(limit)
+        result = query.execute()
+        logger.info(f"DB: Found {len(result.data) if result.data else 0} unenriched events")
+        return result.data if result.data else []
+
+    async def _discover_wallets_and_trades(self, event_id: str) -> tuple[Set[str], int]:
+        """Discover wallets from event trades and save both wallets and trades.
+        
+        API Optimization:
+        - Uses maximum batch_size=10000 (Polymarket API limit) to minimize API calls
+        - Rate limit: 75 requests/10s for /trades endpoint (7.5 req/s)
+        - Parallelizes API calls to maximize throughput (up to 8 concurrent)
+        
+        Deduplication:
+        - ~50% unique trades is normal (wash trading, pagination duplicates, HFT)
+        - Trades are deduplicated globally by ID before saving (upsert handles duplicates)
+        - Uses API's native trade ID when available for accurate matching
+        - Unique wallets tracked via set() to ensure no duplicates
+        
+        """
+        logger.info(f"Fetching trades for event {event_id[:12]}...")
+        batch_size = 10000  # Maximum allowed by Polymarket API
+        max_concurrent_requests = 8  # Parallelize up to 8 API calls (within 75/10s limit)
+        progress_log_interval = 50000  # Log progress every 50k trades
+        
+        # Early termination configuration
+        DUPLICATE_THRESHOLD = 0.95  # 95% duplicate rate triggers early stop
+        CONSECUTIVE_DUPLICATE_BATCHES = 3  # Need 3 consecutive batches of duplicates
+        
+        # Step 1: Fetch all trades in parallel with early termination detection
+        async def fetch_batch(offset_val: int) -> List[Dict[str, Any]]:
+            """Fetch a single batch of trades."""
+            try:
+                trades = await self.data_api.get_trades(event_id=[event_id], limit=batch_size, offset=offset_val)
+                return trades or []
+            except Exception as e:
+                logger.error(f"Error fetching batch at offset {offset_val}: {e}")
+                return []
+
+        # Fetch first batch to check if trades exist
+        first_batch = await fetch_batch(0)
+        if not first_batch:
+            logger.info("No trades found")
+            return set(), 0
+        
+        # Track unique trade IDs during fetching for early termination
+        seen_trade_ids_during_fetch: Set[str] = set()
+        consecutive_duplicate_batches = 0
+        early_terminated = False
+        
+        # Process first batch to initialize tracking
+        for trade in first_batch:
+            normalized = self.wallet_tracker._normalize_trade(trade, event_id)
+            trade_id = normalized.get("id")
+            if trade_id:
+                seen_trade_ids_during_fetch.add(trade_id)
+        
+        # Collect all trade batches in parallel with early termination
+        all_raw_trades = list(first_batch)  # Start with first batch
+        offset = batch_size
+        active_tasks = set()
+        fetch_errors = 0
+        
+        logger.info(f"Fetching trades in parallel (max {max_concurrent_requests} concurrent)...")
+        
+        while True:
+            # Stop fetching if we detected too many consecutive duplicate batches
+            if early_terminated:
+                logger.info(f"Early termination: Stopped fetching after {consecutive_duplicate_batches} consecutive batches with >95% duplicates")
+                break
+            
+            # Start new parallel requests up to concurrency limit
+            while len(active_tasks) < max_concurrent_requests and offset < 10000000 and not early_terminated:
+                task = asyncio.create_task(fetch_batch(offset))
+                active_tasks.add(task)
+                offset += batch_size
+
+            if not active_tasks:
+                break
+
+            # Wait for at least one to complete
+            done, pending = await asyncio.wait(active_tasks, return_when=asyncio.FIRST_COMPLETED)
+            active_tasks = pending
+
+            # Process completed batches and check for duplicates
+            for task in done:
+                try:
+                    trades = await task
+                    if not trades:
+                        # Empty batch means we've reached the end - stop starting new requests
+                        offset = 10000000  # Set to safety limit to stop fetching
+                        continue
+                    
+                    # Check for duplicates in this batch
+                    new_unique_count = 0
+                    batch_trade_ids = []
+                    
+                    for trade in trades:
+                        normalized = self.wallet_tracker._normalize_trade(trade, event_id)
+                        trade_id = normalized.get("id")
+                        if trade_id:
+                            batch_trade_ids.append(trade_id)
+                            if trade_id not in seen_trade_ids_during_fetch:
+                                seen_trade_ids_during_fetch.add(trade_id)
+                                new_unique_count += 1
+                    
+                    # Calculate duplicate rate for this batch
+                    batch_size_actual = len(batch_trade_ids)
+                    if batch_size_actual > 0:
+                        duplicate_rate = 1.0 - (new_unique_count / batch_size_actual)
+                        
+                        # Check if this batch is mostly duplicates
+                        if duplicate_rate >= DUPLICATE_THRESHOLD:
+                            consecutive_duplicate_batches += 1
+                            if consecutive_duplicate_batches >= CONSECUTIVE_DUPLICATE_BATCHES:
+                                early_terminated = True
+                                logger.info(f"Early termination triggered: {consecutive_duplicate_batches} consecutive batches with {duplicate_rate*100:.1f}% duplicates")
+                                # Cancel pending tasks
+                                for pending_task in active_tasks:
+                                    pending_task.cancel()
+                                active_tasks.clear()
+                                break
+                        else:
+                            # Reset counter if we got new unique trades
+                            consecutive_duplicate_batches = 0
+                    
+                    # Add trades to collection
+                    all_raw_trades.extend(trades)
+                    
+                    # Progress logging
+                    if len(all_raw_trades) % progress_log_interval == 0:
+                        unique_so_far = len(seen_trade_ids_during_fetch)
+                        logger.info(f"Fetched: {len(all_raw_trades):,} trades | {unique_so_far:,} unique | {consecutive_duplicate_batches} consecutive duplicate batches")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing batch: {e}")
+                    fetch_errors += 1
+        
+        total_fetched = len(all_raw_trades)
+        unique_during_fetch = len(seen_trade_ids_during_fetch)
+        logger.info(f"Fetch complete: {total_fetched:,} trades fetched | {unique_during_fetch:,} unique IDs detected ({fetch_errors} errors)")
+        if early_terminated:
+            logger.info(f"Early termination saved ~{total_fetched - unique_during_fetch:,} duplicate API calls")
+        
+        # Step 2: Extract wallets and normalize trades sequentially (no race conditions)
+        wallets = set()
+        wallet_data_list = []
+        normalized_trades = []
+        processed_trade_ids: Set[str] = set()  # Track which trades we've added to normalized_trades
+        
+        logger.info("Processing trades: extracting wallets and normalizing...")
+        
+        for trade in all_raw_trades:
+            # Extract wallet
+            proxy_wallet = trade.get("proxyWallet") or trade.get("proxy_wallet")
+            if proxy_wallet and proxy_wallet not in wallets:
+                wallets.add(proxy_wallet)
+                wallet_data_list.append(self.wallet_tracker._normalize_wallet_from_trade(trade))
+            
+            # Normalize trade
+            normalized_trade = self.wallet_tracker._normalize_trade(trade, event_id)
+            trade_id = normalized_trade.get("id")
+            
+            # Global deduplication: only add if we haven't added this trade ID before
+            if trade_id and trade_id not in processed_trade_ids:
+                processed_trade_ids.add(trade_id)
+                normalized_trades.append(normalized_trade)
+        
+        unique_trades_count = len(normalized_trades)
+        duplicates_removed = total_fetched - unique_trades_count
+        
+        logger.info(f"Processing complete: {unique_trades_count:,} unique trades | {duplicates_removed:,} duplicates removed | {len(wallets):,} wallets")
+        
+        # Step 3: Save wallets first (ensures FK constraint satisfied)
+        if wallet_data_list:
+            logger.info(f"Saving {len(wallet_data_list)} wallets...")
+            await self._batch_upsert("wallets", wallet_data_list, "proxy_wallet", check_existing=False)
+            logger.info(f"Saved {len(wallet_data_list)} wallets")
+        
+        # Step 4: Save trades in batches
+        if normalized_trades:
+            logger.info(f"Saving {unique_trades_count:,} unique trades...")
+            saved_count = await self._batch_upsert_with_retry("trades", normalized_trades, "id")
+            logger.info(f"Saved {saved_count:,} trades to database")
+        else:
+            saved_count = 0
+
+        # Step 5: Final verification
+        try:
+            trade_count_result = self.db.supabase.table("trades").select("id", count="exact").eq("event_id", event_id).execute()
+            db_trade_count = trade_count_result.count if hasattr(trade_count_result, 'count') else len(trade_count_result.data) if trade_count_result.data else 0
+            
+            logger.info(f"Verification: {total_fetched:,} fetched → {unique_trades_count:,} unique → {saved_count:,} saved → {db_trade_count:,} in DB | {len(wallets):,} wallets")
+            
+            if db_trade_count < unique_trades_count * 0.9:  # Less than 90% saved
+                logger.warning(f"WARNING: Only {db_trade_count:,}/{unique_trades_count:,} unique trades in DB ({db_trade_count/unique_trades_count*100:.1f}%)")
+            elif db_trade_count == unique_trades_count:
+                logger.info(f"✓ All {unique_trades_count:,} unique trades successfully saved")
+        except Exception as e:
+            logger.warning(f"Could not verify DB counts: {e}")
+
+        return wallets, unique_trades_count
+
+    async def _filter_wallets_needing_sync(self, wallets: Set[str]) -> List[str]:
+        """Filter wallets that don't have positions synced yet."""
+        if not wallets:
+            return []
+        wallet_list = list(wallets)
+        logger.info(f"DB: Checking {len(wallet_list)} wallets for existing positions")
+        result = (self.db.supabase.table("wallet_closed_positions")
+                 .select("proxy_wallet")
+                 .in_("proxy_wallet", wallet_list)
+                 .execute())
+        synced = set(p.get("proxy_wallet") for p in result.data if p.get("proxy_wallet"))
+        needing_sync = [w for w in wallet_list if w not in synced]
+        logger.info(f"Filter: {len(needing_sync)} need sync, {len(synced)} already synced")
+        return needing_sync
+
+    async def _compute_stats_batch(
+        self,
+        wallets: Set[str],
+        events_by_slug: Dict[str, Dict[str, Any]],
+        events_by_id: Dict[str, Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Compute stats for wallets: global, tag-specific, and market-specific."""
+        if not wallets:
+            return {"stats_computed": 0}
+
+        wallet_list = list(wallets)
+        stats_computed = 0
+
+        async def compute_stats(wallet: str) -> bool:
+            positions = await self._fetch_positions(wallet)
+            if not positions:
+                return False
+
+            # Global stats
+            global_stats = self.wallet_tracker.compute_wallet_stats_from_positions(positions)
+            global_stats["proxy_wallet"] = wallet
+            await self._save_to_db("wallet_stats", global_stats, "proxy_wallet")
+
+            # Tag stats
+            tag_stats = self.wallet_tracker.compute_wallet_tag_stats_with_ids(
+                wallet, positions, events_by_slug, events_by_id
+            )
+            for tag_stat in tag_stats:
+                await self._save_to_db("wallet_tag_stats", tag_stat, "proxy_wallet")
+
+            # Market stats
+            market_stats = self.wallet_tracker.compute_wallet_market_stats(wallet, positions)
+            for market_stat in market_stats:
+                await self._save_to_db("wallet_market_stats", market_stat, "proxy_wallet")
+
+            return True
+
+        results = await self._process_batches(wallet_list, compute_stats, batch_size=20)
+        stats_computed = sum(results)
+        return {"stats_computed": stats_computed}
+
+    async def _compute_scores_batch(self, wallets: Set[str]) -> int:
+        """Compute and save scores for wallets."""
+        scores_computed = 0
+        for wallet in wallets:
+            stats_result = self.db.supabase.table("wallet_stats").select("*").eq("proxy_wallet", wallet).execute()
+            if not stats_result.data:
+                continue
+
+            wallet_stats = stats_result.data[0]
+            tag_result = (self.db.supabase.table("wallet_tag_stats")
+                         .select("*")
+                         .eq("proxy_wallet", wallet)
+                         .order("roi", desc=True)
+                         .limit(1)
+                         .execute())
+            tag_stats = tag_result.data[0] if tag_result.data else None
+
+            score = self.wallet_tracker.score_wallet(wallet_stats, tag_stats)
+            score["proxy_wallet"] = wallet
+            await self._save_to_db("wallet_scores", score, "proxy_wallet")
+            scores_computed += 1
+
+        return scores_computed
+
+    async def _mark_event_enriched(self, event_id: str, is_closed: bool) -> None:
+        """Mark event as enriched."""
+        if is_closed:
+            await self.db.update_event_closed_enriched_status(event_id, True)
+        else:
+            await self.db.update_event_enriched_status(event_id, True)
+
+    async def _fetch_events_from_db(self, limit: int, is_closed: bool = False) -> List[Dict[str, Any]]:
+        """Fetch events from database."""
+        if is_closed:
+            result = self.db.supabase.table("events_closed").select("*").limit(limit).execute()
+        else:
+            result = self.db.supabase.table("events").select("*").eq("status", "active").limit(limit).execute()
+        return result.data if result.data else []
+
+    async def _fetch_positions(self, wallet: str) -> List[Dict[str, Any]]:
+        """Fetch closed positions for a wallet."""
+        result = self.db.supabase.table("wallet_closed_positions").select("*").eq("proxy_wallet", wallet).execute()
+        return result.data if result.data else []
+
+    async def _save_to_db(self, table_name: str, data: Dict[str, Any], required_field: Optional[str] = None) -> None:
+        """Unified database save using upsert."""
+        assert data, f"Data cannot be empty for table {table_name}"
+        if required_field:
+            assert data.get(required_field), f"Missing required field '{required_field}'"
+        self.db.supabase.table(table_name).upsert(data).execute()
+
+    def _save_to_db_async(self, table_name: str, required_field: str):
+        """Create async save callback for batch operations."""
+        async def save_func(data: Dict[str, Any]) -> None:
+            await self._save_to_db(table_name, data, required_field)
+        return save_func
+
+    async def _check_existing_ids(self, table_name: str, ids: List[str], id_field: str = "id") -> Set[str]:
+        """Check which IDs already exist in the database."""
+        if not ids:
+            return set()
+        try:
+            # Query in chunks of 1000 (Supabase limit)
+            existing = set()
+            for i in range(0, len(ids), 1000):
+                chunk = ids[i:i + 1000]
+                result = self.db.supabase.table(table_name).select(id_field).in_(id_field, chunk).execute()
+                if result.data:
+                    existing.update(row.get(id_field) for row in result.data if row.get(id_field))
+            return existing
+        except Exception as e:
+            logger.warning(f"Error checking existing IDs in {table_name}: {e}")
+            return set()
+
+    async def _batch_upsert(self, table_name: str, data_list: List[Dict[str, Any]], key_field: str, check_existing: bool = False) -> None:
+        """Batch upsert data to database - simplified and fast."""
+        if not data_list:
+            return
+        
+        # Batch upsert with error handling
+        for i in range(0, len(data_list), 1000):
+            batch = data_list[i:i + 1000]
+            try:
+                self.db.supabase.table(table_name).upsert(batch).execute()
+            except Exception as e:
+                logger.error(f"Failed to upsert {table_name}: {e}")
+                if "foreign key" in str(e).lower():
+                    logger.error(f"FK constraint violation - wallets not saved before trades")
+                raise
+
+    async def _batch_upsert_with_retry(
+        self, 
+        table_name: str, 
+        data_list: List[Dict[str, Any]], 
+        key_field: str,
+        max_retries: int = 3,
+        retry_delay: float = 1.0
+    ) -> int:
+        """Batch upsert with retry logic and detailed error tracking.
+        
+        Returns:
+            int: Number of successfully saved records
+        """
+        if not data_list:
+            return 0
+        
+        saved_count = 0
+        failed_batches = []
+        total_batches = (len(data_list) + 999) // 1000
+        
+        for batch_idx, i in enumerate(range(0, len(data_list), 1000), 1):
+            batch = data_list[i:i + 1000]
+            batch_saved = False
+            
+            # Retry logic for transient errors
+            for attempt in range(max_retries):
+                try:
+                    self.db.supabase.table(table_name).upsert(batch).execute()
+                    saved_count += len(batch)
+                    batch_saved = True
+                    
+                    # Log progress for large batches
+                    if batch_idx % 10 == 0 or batch_idx == total_batches:
+                        logger.debug(f"Saved batch {batch_idx}/{total_batches} ({saved_count:,} records)")
+                    break
+                    
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    
+                    # Check error type
+                    if "foreign key" in error_msg or "fk_" in error_msg:
+                        logger.error(f"FK constraint violation in batch {batch_idx}/{total_batches}: {e}")
+                        # Don't retry FK errors - they indicate a logic issue
+                        failed_batches.append({
+                            "batch_idx": batch_idx,
+                            "size": len(batch),
+                            "error": "FK constraint violation",
+                            "details": str(e)
+                        })
+                        break
+                    elif "timeout" in error_msg or "connection" in error_msg or "network" in error_msg:
+                        # Transient error - retry
+                        if attempt < max_retries - 1:
+                            wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                            logger.warning(f"Transient error in batch {batch_idx}, retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_retries}): {e}")
+                            await asyncio.sleep(wait_time)
+                        else:
+                            logger.error(f"Failed to save batch {batch_idx} after {max_retries} attempts: {e}")
+                            failed_batches.append({
+                                "batch_idx": batch_idx,
+                                "size": len(batch),
+                                "error": "Network/timeout error",
+                                "details": str(e)
+                            })
+                    else:
+                        # Other error - log and don't retry
+                        logger.error(f"Failed to save batch {batch_idx}/{total_batches}: {e}")
+                        failed_batches.append({
+                            "batch_idx": batch_idx,
+                            "size": len(batch),
+                            "error": "Other error",
+                            "details": str(e)
+                        })
+                        break
+            
+            if not batch_saved and batch_idx <= 3:
+                # Log sample of failed batch for debugging
+                logger.error(f"Sample failed batch {batch_idx}: {batch[0] if batch else 'empty'}")
+        
+        # Summary logging
+        if failed_batches:
+            failed_count = sum(b["size"] for b in failed_batches)
+            logger.warning(f"Saved {saved_count:,}/{len(data_list):,} records to {table_name} ({len(failed_batches)} batches failed, {failed_count:,} records lost)")
+        else:
+            logger.info(f"Successfully saved all {saved_count:,} records to {table_name}")
+        
+        return saved_count
+
+    async def _process_batches(self, items: List, process_func, batch_size: int = None) -> List:
+        """Execute batch processing with parallelism."""
         batch_size = batch_size or self.max_concurrent
         return [
             result
@@ -51,592 +568,13 @@ class PolymarketWalletCollector:
             for result in await asyncio.gather(*[process_func(item) for item in items[i:i + batch_size]])
         ]
 
-    # ========================================================================
-    # PHASE 1: WALLET DISCOVERY FROM CLOSED EVENTS
-    # ========================================================================
 
-    async def sync_wallets_from_closed_events(
-        self,
-        limit: int = 100,
-        save_trades: bool = True
-    ) -> Dict[str, Any]:
-        """
-        Elite wallet discovery protocol from closed events.
-
-        Assertive execution:
-        1. Fetch closed events from intelligence database
-        2. Discover all wallets that traded in those events
-        3. Save wallet profiles and trade history
-        4. Deliver discovery intelligence report
-
-        Args:
-            limit: Maximum number of closed events to process
-            save_trades: Whether to save individual trades to database
-
-        Returns:
-            Discovery intelligence report
-        """
-        logger.info("🚀 Elite wallet discovery protocol initiated")
-
-        # Fetch closed events from database
-        closed_events = await self._fetch_closed_events_from_db(limit)
-        if not closed_events:
-            logger.info("📭 No closed events found in intelligence database")
-            return self._generate_discovery_report(0, 0, 0, 0)
-
-        logger.info(f"🎯 Acquired {len(closed_events)} closed events for wallet reconnaissance")
-
-        # Extract event IDs
-        event_ids = [str(event.get("id")) for event in closed_events if event.get("id")]
-        if not event_ids:
-            logger.warning("⚠️ No valid event IDs extracted from closed events")
-            return self._generate_discovery_report(0, 0, 0, 0)
-
-        # Discover wallets from event trades
-        discovery_result = await self.wallet_tracker.discover_wallets_from_events(
-            event_ids=event_ids,
-            save_wallet=self._save_wallet_profile if True else None,
-            save_trade=self._save_trade_record if save_trades else None
-        )
-
-        wallets_discovered = discovery_result.get("wallets_discovered", 0)
-        trades_fetched = discovery_result.get("trades_fetched", 0)
-
-        logger.info(f"✅ Discovery complete: {wallets_discovered} wallets from {trades_fetched} trades")
-
-        # Sync closed events to events_closed table
-        events_synced = await self._sync_closed_events_to_db(closed_events)
-
-        return self._generate_discovery_report(
-            len(event_ids),
-            trades_fetched,
-            wallets_discovered,
-            events_synced
-        )
-
-    async def _fetch_closed_events_from_db(self, limit: int) -> List[Dict[str, Any]]:
-        """Fetch closed events from intelligence database."""
-        logger.info(f"📡 Fetching closed events from database (limit={limit})")
-
-        # First check events_closed table
-        result = self.db.supabase.table("events_closed").select("*").limit(limit).execute()
-
-        if result.data:
-            logger.info(f"📦 Retrieved {len(result.data)} closed events from events_closed table")
-            return result.data
-
-        # Fallback: Check events table for closed status
-        logger.info("📡 Checking events table for closed entries...")
-        fallback_result = self.db.supabase.table("events").select("*").eq("status", "closed").limit(limit).execute()
-
-        if fallback_result.data:
-            logger.info(f"📦 Retrieved {len(fallback_result.data)} closed events from events table")
-            return fallback_result.data
-
-        logger.info("📭 No closed events found - initiating fresh sync from Polymarket")
-        return await self._fetch_closed_events_from_api(limit)
-
-    async def _fetch_closed_events_from_api(self, limit: int) -> List[Dict[str, Any]]:
-        """Fetch closed events directly from Polymarket API."""
-        logger.info(f"🌐 Fetching closed events from Polymarket API (limit={limit})")
-        closed_events = await self.gamma.get_all_events(
-            active=False,
-            page_size=100,
-            max_events=limit,
-            closed="true"
-        )
-        logger.info(f"📦 Fetched {len(closed_events)} closed events from API")
-        return closed_events
-
-    async def _sync_closed_events_to_db(self, events: List[Dict[str, Any]]) -> int:
-        """Sync closed events to events_closed table."""
-        logger.info(f"💾 Syncing {len(events)} closed events to database")
-
-        synced_count = 0
-        for event in events:
-            try:
-                normalized = self.wallet_tracker._normalize_closed_event(event)
-                self.db.supabase.table("events_closed").upsert(normalized).execute()
-                synced_count += 1
-            except Exception as e:
-                logger.debug(f"Event {event.get('id')} sync skipped: {e}")
-
-        logger.info(f"✅ Synced {synced_count}/{len(events)} closed events")
-        return synced_count
-
-    async def _save_wallet_profile(self, wallet_data: Dict[str, Any]) -> None:
-        """Save wallet profile to database."""
-        try:
-            self.db.supabase.table("wallets").upsert(wallet_data).execute()
-        except Exception as e:
-            logger.debug(f"Wallet save skipped: {e}")
-
-    async def _save_trade_record(self, trade_data: Dict[str, Any]) -> None:
-        """Save trade record to database."""
-        try:
-            self.db.supabase.table("trades").upsert(trade_data).execute()
-        except Exception as e:
-            logger.debug(f"Trade save skipped: {e}")
-
-    def _generate_discovery_report(
-        self,
-        events_processed: int,
-        trades_fetched: int,
-        wallets_discovered: int,
-        events_synced: int
-    ) -> Dict[str, Any]:
-        """Generate wallet discovery intelligence report."""
-        return {
-            "events_processed": events_processed,
-            "trades_fetched": trades_fetched,
-            "wallets_discovered": wallets_discovered,
-            "events_synced": events_synced,
-            "discovery_time": datetime.now(timezone.utc).isoformat()
-        }
-
-    # ========================================================================
-    # PHASE 2: PERFORMANCE DATA SYNC
-    # ========================================================================
-
-    async def sync_wallet_performance_data(
-        self,
-        wallet_addresses: Optional[List[str]] = None,
-        max_wallets: int = 100
-    ) -> Dict[str, Any]:
-        """
-        Sync historical performance data for wallets.
-
-        Assertive execution:
-        1. Fetch closed positions for each wallet
-        2. Compute global wallet statistics
-        3. Compute tag-specific statistics
-        4. Save all metrics to database
-
-        Args:
-            wallet_addresses: Specific wallets to sync (None = fetch from DB)
-            max_wallets: Maximum wallets to process
-
-        Returns:
-            Performance sync intelligence report
-        """
-        logger.info("🚀 Elite performance sync protocol initiated")
-
-        # Get wallet addresses if not provided
-        if not wallet_addresses:
-            wallet_addresses = await self._fetch_wallet_addresses_from_db(max_wallets)
-
-        if not wallet_addresses:
-            logger.info("📭 No wallets found for performance sync")
-            return self._generate_performance_report(0, 0, 0.0, 0.0)
-
-        logger.info(f"🎯 Processing performance data for {len(wallet_addresses)} wallets")
-
-        # Fetch closed events for event enrichment
-        events = await self._fetch_closed_events_from_db(500)
-        events_by_id, events_by_slug = self.wallet_tracker.build_events_lookup(events)
-
-        # Sync closed positions for all wallets
-        batch_result = await self.wallet_tracker.sync_wallets_closed_positions_batch(
-            proxy_wallets=wallet_addresses,
-            save_position=self._save_closed_position,
-            events_by_slug=events_by_slug,
-            max_concurrency=self.max_concurrent,
-            progress_callback=self._log_sync_progress
-        )
-
-        # Compute and save wallet statistics
-        stats_computed = await self._compute_and_save_all_wallet_stats(
-            wallet_addresses,
-            events_by_slug,
-            events_by_id
-        )
-
-        return self._generate_performance_report(
-            batch_result.get("wallets_processed", 0),
-            batch_result.get("total_positions", 0),
-            batch_result.get("total_volume", 0.0),
-            batch_result.get("total_pnl", 0.0),
-            stats_computed
-        )
-
-    async def _fetch_wallet_addresses_from_db(self, limit: int) -> List[str]:
-        """Fetch wallet addresses from database."""
-        logger.info(f"📡 Fetching wallet addresses (limit={limit})")
-        result = self.db.supabase.table("wallets").select("proxy_wallet").limit(limit).execute()
-        addresses = [w.get("proxy_wallet") for w in result.data if w.get("proxy_wallet")]
-        logger.info(f"📦 Retrieved {len(addresses)} wallet addresses")
-        return addresses
-
-    async def _save_closed_position(self, position_data: Dict[str, Any]) -> None:
-        """Save closed position to database."""
-        try:
-            self.db.supabase.table("wallet_closed_positions").upsert(position_data).execute()
-        except Exception as e:
-            logger.debug(f"Position save skipped: {e}")
-
-    def _log_sync_progress(self, wallet: str, current: int, total: int) -> None:
-        """Log wallet sync progress."""
-        if current % 10 == 0 or current == total:
-            logger.info(f"📊 Progress: {current}/{total} wallets ({wallet[:12]}...)")
-
-    async def _compute_and_save_all_wallet_stats(
-        self,
-        wallet_addresses: List[str],
-        events_by_slug: Dict[str, Dict[str, Any]],
-        events_by_id: Dict[str, Dict[str, Any]]
-    ) -> int:
-        """Compute and save global and tag statistics for all wallets."""
-        logger.info(f"📊 Computing statistics for {len(wallet_addresses)} wallets")
-
-        stats_saved = 0
-
-        async def compute_wallet_stats(wallet: str) -> bool:
-            # Fetch closed positions from database
-            positions = await self._fetch_wallet_positions_from_db(wallet)
-            if not positions:
-                return False
-
-            # Compute global stats
-            global_stats = self.wallet_tracker.compute_wallet_stats_from_positions(positions)
-            global_stats["proxy_wallet"] = wallet
-            await self._save_wallet_stats(global_stats)
-
-            # Compute tag-specific stats
-            tag_stats = self.wallet_tracker.compute_wallet_tag_stats_with_ids(
-                wallet, positions, events_by_slug, events_by_id
-            )
-            for tag_stat in tag_stats:
-                await self._save_wallet_tag_stats(tag_stat)
-
-            # Compute market stats
-            market_stats = self.wallet_tracker.compute_wallet_market_stats(wallet, positions)
-            for market_stat in market_stats:
-                await self._save_wallet_market_stats(market_stat)
-
-            return True
-
-        results = await self._process_batches(wallet_addresses, compute_wallet_stats, batch_size=20)
-        stats_saved = sum(results)
-
-        logger.info(f"✅ Computed statistics for {stats_saved}/{len(wallet_addresses)} wallets")
-        return stats_saved
-
-    async def _fetch_wallet_positions_from_db(self, wallet: str) -> List[Dict[str, Any]]:
-        """Fetch closed positions for a wallet from database."""
-        result = self.db.supabase.table("wallet_closed_positions").select("*").eq("proxy_wallet", wallet).execute()
-        return result.data
-
-    async def _save_wallet_stats(self, stats: Dict[str, Any]) -> None:
-        """Save global wallet stats to database."""
-        try:
-            self.db.supabase.table("wallet_stats").upsert(stats).execute()
-        except Exception as e:
-            logger.debug(f"Wallet stats save skipped: {e}")
-
-    async def _save_wallet_tag_stats(self, tag_stats: Dict[str, Any]) -> None:
-        """Save tag-specific stats to database."""
-        try:
-            self.db.supabase.table("wallet_tag_stats").upsert(tag_stats).execute()
-        except Exception as e:
-            logger.debug(f"Tag stats save skipped: {e}")
-
-    async def _save_wallet_market_stats(self, market_stats: Dict[str, Any]) -> None:
-        """Save market-specific stats to database."""
-        try:
-            self.db.supabase.table("wallet_market_stats").upsert(market_stats).execute()
-        except Exception as e:
-            logger.debug(f"Market stats save skipped: {e}")
-
-    async def update_wallet_aggregates_from_trades(self) -> Dict[str, Any]:
-        """
-        Update wallet aggregate stats (total_trades, total_volume, total_markets)
-        from the trades table.
-
-        Returns:
-            Update summary with counts
-        """
-        logger.info("🚀 Updating wallet aggregates from trades...")
-
-        # Get all trades (paginated)
-        all_trades = []
-        offset = 0
-        batch_size = 1000
-
-        while True:
-            result = self.db.supabase.table("trades").select("proxy_wallet,price,size,asset").range(offset, offset + batch_size - 1).execute()
-            if not result.data:
-                break
-            all_trades.extend(result.data)
-            if len(result.data) < batch_size:
-                break
-            offset += batch_size
-
-        logger.info(f"📦 Loaded {len(all_trades)} trades for aggregation")
-
-        # Aggregate by wallet
-        wallet_aggregates = {}
-        for trade in all_trades:
-            wallet = trade.get("proxy_wallet")
-            if not wallet:
-                continue
-
-            if wallet not in wallet_aggregates:
-                wallet_aggregates[wallet] = {
-                    "total_trades": 0,
-                    "total_volume": 0.0,
-                    "markets": set()
-                }
-
-            wallet_aggregates[wallet]["total_trades"] += 1
-            # Volume = price * size
-            price = trade.get("price", 0) or 0
-            size = trade.get("size", 0) or 0
-            wallet_aggregates[wallet]["total_volume"] += float(price) * float(size)
-
-            # Track unique markets (assets)
-            asset = trade.get("asset")
-            if asset:
-                wallet_aggregates[wallet]["markets"].add(asset)
-
-        logger.info(f"📊 Aggregated stats for {len(wallet_aggregates)} unique wallets")
-
-        # Update wallets table
-        updated_count = 0
-        for wallet, aggregates in wallet_aggregates.items():
-            try:
-                update_data = {
-                    "total_trades": aggregates["total_trades"],
-                    "total_volume": aggregates["total_volume"],
-                    "total_markets": len(aggregates["markets"]),
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }
-                self.db.supabase.table("wallets").update(update_data).eq("proxy_wallet", wallet).execute()
-                updated_count += 1
-            except Exception as e:
-                logger.debug(f"Wallet aggregate update skipped for {wallet[:20]}: {e}")
-
-        logger.info(f"✅ Updated aggregates for {updated_count}/{len(wallet_aggregates)} wallets")
-
-        return {
-            "total_trades_processed": len(all_trades),
-            "unique_wallets": len(wallet_aggregates),
-            "wallets_updated": updated_count,
-            "update_time": datetime.now(timezone.utc).isoformat()
-        }
-
-    def _generate_performance_report(
-        self,
-        wallets_processed: int,
-        positions_synced: int,
-        total_volume: float,
-        total_pnl: float,
-        stats_computed: int = 0
-    ) -> Dict[str, Any]:
-        """Generate performance sync intelligence report."""
-        return {
-            "wallets_processed": wallets_processed,
-            "positions_synced": positions_synced,
-            "total_volume": total_volume,
-            "total_pnl": total_pnl,
-            "stats_computed": stats_computed,
-            "sync_time": datetime.now(timezone.utc).isoformat()
-        }
-
-    # ========================================================================
-    # PHASE 3: WALLET SCORING & TIER ASSIGNMENT
-    # ========================================================================
-
-    async def compute_and_save_wallet_scores(self) -> Dict[str, Any]:
-        """
-        Compute composite scores and tier assignments for all eligible wallets.
-
-        Assertive execution:
-        1. Fetch all wallet stats from database
-        2. Compute composite scores using multi-factor formula
-        3. Assign tiers (A/B/C) based on score thresholds
-        4. Save scores to wallet_scores table
-
-        Returns:
-            Scoring intelligence report
-        """
-        logger.info("🚀 Elite wallet scoring protocol initiated")
-
-        # Fetch all wallet stats
-        all_stats = await self._fetch_all_wallet_stats()
-        if not all_stats:
-            logger.info("📭 No wallet statistics found for scoring")
-            return self._generate_scoring_report(0, 0, 0, 0)
-
-        logger.info(f"🎯 Scoring {len(all_stats)} wallets for tier assignment")
-
-        # Compute scores for each wallet
-        scores_computed = 0
-        tier_counts = {"A": 0, "B": 0, "C": 0, "ineligible": 0}
-
-        for wallet_stats in all_stats:
-            # Get tag stats for context
-            tag_stats = await self._fetch_wallet_best_tag_stats(wallet_stats.get("proxy_wallet"))
-
-            # Compute score
-            score = self.wallet_tracker.score_wallet(wallet_stats, tag_stats)
-            score["proxy_wallet"] = wallet_stats.get("proxy_wallet")
-
-            # Save score
-            await self._save_wallet_score(score)
-
-            # Track tier distribution
-            tier = score.get("tier")
-            if tier in tier_counts:
-                tier_counts[tier] += 1
-            else:
-                tier_counts["ineligible"] += 1
-
-            scores_computed += 1
-
-        logger.info(f"✅ Scored {scores_computed} wallets | Tier A: {tier_counts['A']} | Tier B: {tier_counts['B']} | Tier C: {tier_counts['C']}")
-
-        return self._generate_scoring_report(
-            scores_computed,
-            tier_counts["A"],
-            tier_counts["B"],
-            tier_counts["C"]
-        )
-
-    async def _fetch_all_wallet_stats(self) -> List[Dict[str, Any]]:
-        """Fetch all wallet statistics from database."""
-        result = self.db.supabase.table("wallet_stats").select("*").execute()
-        return result.data
-
-    async def _fetch_wallet_best_tag_stats(self, proxy_wallet: str) -> Optional[Dict[str, Any]]:
-        """Fetch the best performing tag stats for a wallet."""
-        result = self.db.supabase.table("wallet_tag_stats").select("*").eq("proxy_wallet", proxy_wallet).order("roi", desc=True).limit(1).execute()
-        return result.data[0] if result.data else None
-
-    async def _save_wallet_score(self, score: Dict[str, Any]) -> None:
-        """Save wallet score to database."""
-        try:
-            self.db.supabase.table("wallet_scores").upsert(score).execute()
-        except Exception as e:
-            logger.debug(f"Score save skipped: {e}")
-
-    def _generate_scoring_report(
-        self,
-        scores_computed: int,
-        tier_a_count: int,
-        tier_b_count: int,
-        tier_c_count: int
-    ) -> Dict[str, Any]:
-        """Generate scoring intelligence report."""
-        return {
-            "scores_computed": scores_computed,
-            "tier_a_count": tier_a_count,
-            "tier_b_count": tier_b_count,
-            "tier_c_count": tier_c_count,
-            "elite_wallets": tier_a_count,
-            "scoring_time": datetime.now(timezone.utc).isoformat()
-        }
-
-    # ========================================================================
-    # COMPLETE ORCHESTRATION
-    # ========================================================================
-
-    async def execute_full_wallet_sync(self, event_limit: int = 100) -> Dict[str, Any]:
-        """
-        Execute complete wallet intelligence acquisition pipeline.
-
-        Full mission:
-        1. Discover wallets from closed events
-        2. Sync performance data
-        3. Compute and save scores
-
-        Args:
-            event_limit: Maximum events to process
-
-        Returns:
-            Complete mission report
-        """
-        logger.info("🚀 ELITE FULL WALLET SYNC PROTOCOL INITIATED")
-
-        # Phase 1: Discovery
-        logger.info("📍 PHASE 1: Wallet Discovery")
-        discovery = await self.sync_wallets_from_closed_events(limit=event_limit)
-
-        # Phase 2: Performance Sync
-        logger.info("📍 PHASE 2: Performance Data Sync")
-        performance = await self.sync_wallet_performance_data(max_wallets=500)
-
-        # Phase 3: Scoring
-        logger.info("📍 PHASE 3: Wallet Scoring & Tier Assignment")
-        scoring = await self.compute_and_save_wallet_scores()
-
-        victory_report = {
-            "discovery": discovery,
-            "performance": performance,
-            "scoring": scoring,
-            "mission_complete_time": datetime.now(timezone.utc).isoformat()
-        }
-
-        logger.info("🎯 MISSION ACCOMPLISHED - Full wallet intelligence pipeline complete!")
-        logger.info(f"   Wallets discovered: {discovery.get('wallets_discovered', 0)}")
-        logger.info(f"   Positions synced: {performance.get('positions_synced', 0)}")
-        logger.info(f"   Elite (Tier A) wallets: {scoring.get('tier_a_count', 0)}")
-
-        return victory_report
-
-
-# ========================================================================
-# STANDALONE FUNCTIONS FOR EASY IMPORT
-# ========================================================================
-
-async def sync_wallets_from_closed_events(limit: int = 100) -> Dict[str, Any]:
-    """
-    Elite wallet discovery from closed events.
-
-    Args:
-        limit: Maximum closed events to process
-
-    Returns:
-        Discovery intelligence report
-    """
+# Standalone function for easy import
+async def enrich_unenriched_events(
+    max_events: int = 10,
+    is_closed: bool = False,
+    skip_existing_positions: bool = True
+) -> Dict[str, Any]:
+    """Master function to enrich unenriched events with wallet intelligence."""
     collector = PolymarketWalletCollector()
-    return await collector.sync_wallets_from_closed_events(limit=limit)
-
-
-async def sync_wallet_performance(wallet_addresses: Optional[List[str]] = None, max_wallets: int = 100) -> Dict[str, Any]:
-    """
-    Sync historical performance data for wallets.
-
-    Args:
-        wallet_addresses: Specific wallets (None = fetch from DB)
-        max_wallets: Maximum wallets to process
-
-    Returns:
-        Performance sync report
-    """
-    collector = PolymarketWalletCollector()
-    return await collector.sync_wallet_performance_data(wallet_addresses, max_wallets)
-
-
-async def compute_wallet_scores() -> Dict[str, Any]:
-    """
-    Compute and save wallet scores with tier assignments.
-
-    Returns:
-        Scoring intelligence report
-    """
-    collector = PolymarketWalletCollector()
-    return await collector.compute_and_save_wallet_scores()
-
-
-async def execute_full_wallet_sync(event_limit: int = 100) -> Dict[str, Any]:
-    """
-    Execute complete wallet intelligence acquisition pipeline.
-
-    Args:
-        event_limit: Maximum events to process
-
-    Returns:
-        Complete mission report
-    """
-    collector = PolymarketWalletCollector()
-    return await collector.execute_full_wallet_sync(event_limit=event_limit)
+    return await collector.enrich_unenriched_events(max_events, is_closed, skip_existing_positions)

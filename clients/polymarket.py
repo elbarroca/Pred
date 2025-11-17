@@ -56,14 +56,18 @@ class PolymarketDataAPI:
         self.timeout = timeout
 
         # Maximum rate limits (at API limits)
-        self.rate_limit_trades = 7.5    # 75 req/10s
-        self.rate_limit_default = 20.0  # 200 req/10s
+        self.rate_limit_trades = 7.5    # 75 req/10s = 7.5 req/s
+        self.rate_limit_default = 20.0  # 200 req/10s = 20 req/s
 
-        # Rate limiting state - maximum throughput semaphores
-        self._trades_semaphore = asyncio.Semaphore(15)   # 2x buffer
-        self._default_semaphore = asyncio.Semaphore(40)  # 2x buffer
-        self._last_trades_request = 0.0
-        self._last_default_request = 0.0
+        # Rate limiting state - token bucket for concurrent requests
+        # Allow up to 8 concurrent trades requests (75/10s allows ~7-8 in flight)
+        self._trades_semaphore = asyncio.Semaphore(8)
+        self._default_semaphore = asyncio.Semaphore(20)
+        
+        # Sliding window rate limiter: track request times
+        self._trades_request_times = []
+        self._default_request_times = []
+        self._rate_lock = asyncio.Lock()
 
     async def _rate_limited_request(
         self,
@@ -71,24 +75,35 @@ class PolymarketDataAPI:
         params: Optional[Dict[str, Any]] = None,
         is_trades: bool = False
     ) -> Any:
-        """Make maximum-throughput rate-limited HTTP request."""
+        """Make maximum-throughput rate-limited HTTP request with proper concurrency.
+        
+        Uses sliding window to allow up to 75 req/10s for trades (7.5 req/s).
+        Allows multiple concurrent requests while respecting rate limits.
+        """
         semaphore = self._trades_semaphore if is_trades else self._default_semaphore
-        rate_limit = self.rate_limit_trades if is_trades else self.rate_limit_default
-        min_interval = 1.0 / rate_limit
+        request_times = self._trades_request_times if is_trades else self._default_request_times
+        max_requests = 75 if is_trades else 200
+        window_seconds = 10.0
 
         async with semaphore:
-            # Maximum performance rate limiting
-            now = asyncio.get_event_loop().time()
-            if is_trades:
-                elapsed = now - self._last_trades_request
-                if elapsed < min_interval:
-                    await asyncio.sleep(min_interval - elapsed)
-                self._last_trades_request = now + min_interval
-            else:
-                elapsed = now - self._last_default_request
-                if elapsed < min_interval:
-                    await asyncio.sleep(min_interval - elapsed)
-                self._last_default_request = now + min_interval
+            # Sliding window rate limiting
+            async with self._rate_lock:
+                now = asyncio.get_event_loop().time()
+                # Remove requests older than window
+                request_times[:] = [t for t in request_times if now - t < window_seconds]
+                
+                # If at limit, wait until oldest request expires
+                if len(request_times) >= max_requests:
+                    oldest_time = min(request_times)
+                    wait_time = window_seconds - (now - oldest_time) + 0.1  # Small buffer
+                    if wait_time > 0:
+                        await asyncio.sleep(wait_time)
+                        now = asyncio.get_event_loop().time()
+                        # Clean up again after wait
+                        request_times[:] = [t for t in request_times if now - t < window_seconds]
+                
+                # Record this request
+                request_times.append(now)
 
             # Fast HTTP request
             url = f"{self.base_url}{endpoint}"

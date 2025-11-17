@@ -215,10 +215,12 @@ class PolymarketTraderAnalyzer:
 
     async def _save_open_position(self, position_data: Dict[str, Any]) -> None:
         """Save open position to database."""
-        try:
-            self.db.supabase.table("wallet_open_positions").upsert(position_data).execute()
-        except Exception as e:
-            logger.debug(f"Open position save skipped: {e}")
+        assert position_data, "Position data cannot be empty"
+        proxy_wallet = position_data.get("proxy_wallet")
+        assert proxy_wallet, f"Position data missing required 'proxy_wallet' field: {position_data}"
+
+        self.db.supabase.table("wallet_open_positions").upsert(position_data).execute()
+        logger.debug(f"✅ Saved open position for wallet: {proxy_wallet}")
 
     def _log_positions_progress(self, wallet: str, current: int, total: int) -> None:
         """Log positions fetch progress."""
@@ -588,10 +590,14 @@ class PolymarketTraderAnalyzer:
 
     async def _save_tag_credibility(self, cred_score: Dict[str, Any]) -> None:
         """Save tag credibility score to database."""
-        try:
-            self.db.supabase.table("trader_tag_credibility").upsert(cred_score).execute()
-        except Exception as e:
-            logger.debug(f"Tag credibility save skipped: {e}")
+        assert cred_score, "Tag credibility score cannot be empty"
+        proxy_wallet = cred_score.get("proxy_wallet")
+        assert proxy_wallet, f"Tag credibility score missing required 'proxy_wallet' field: {cred_score}"
+        tag = cred_score.get("tag")
+        assert tag, f"Tag credibility score missing required 'tag' field: {cred_score}"
+
+        self.db.supabase.table("trader_tag_credibility").upsert(cred_score).execute()
+        logger.debug(f"✅ Saved tag credibility for wallet {proxy_wallet} in tag: {tag}")
 
     # ========================================================================
     # COMPLETE ANALYSIS ORCHESTRATION

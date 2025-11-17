@@ -1,73 +1,80 @@
+# ========================================================================
+# CORE PREDICTION MARKET CLIENTS
+# ========================================================================
+
+# Primary platform clients
 from .polymarket import PolymarketClient
+from .kalshi import KalshiClient
 
-# Optional platform clients
-try:
-    from .kalshi import KalshiClient
-except ImportError:
-    KalshiClient = None
-
-try:
-    from .manifold import ManifoldClient
-except ImportError:
-    ManifoldClient = None
-
-try:
-    from .market_enricher import MarketEnricher
-except ImportError:
-    MarketEnricher = None
-
+# Research and analytics clients
 try:
     from .valyu import ValyuResearchClient
 except ImportError:
     ValyuResearchClient = None
 
-try:
-    from .web3.wallet_tracker import WalletTrackerClient
-except ImportError:
-    WalletTrackerClient = None
+from .trader_analytics import TraderAnalytics
 
-try:
-    from .trade.insider_detector import InsiderDetectorClient
-except ImportError:
-    InsiderDetectorClient = None
+# Wallet tracking client
+from .wallet_tracker import WalletTracker
 
-try:
-    from .web3.alchemy import AlchemyWebhooksClient
-except ImportError:
-    AlchemyWebhooksClient = None
+# ========================================================================
+# WALLET INTELLIGENCE FUNCTIONS
+# ========================================================================
 
-# Optional imports for webhook providers
-try:
-    from .web3.quicknode import QuickNodeWebhooksClient
-except ImportError:
-    QuickNodeWebhooksClient = None
+# Wallet discovery and performance orchestration
+from .functions.wallets import (
+    PolymarketWalletCollector,
+    enrich_unenriched_events,
+)
 
-try:
-    from .web3.moralis import MoralisStreamsClient
-except ImportError:
-    MoralisStreamsClient = None
+# ========================================================================
+# TRADER ANALYSIS FUNCTIONS
+# ========================================================================
 
-try:
-    from .trade.trader_analytics import TraderAnalyticsClient
-except ImportError:
-    TraderAnalyticsClient = None
+# Trader analysis and copy-trading intelligence
+from .functions.traders import (
+    PolymarketTraderAnalyzer,
+    filter_best_traders,
+    get_best_traders_positions,
+    get_copy_trade_suggestions,
+    analyze_smart_money_consensus,
+    execute_full_trader_analysis,
+)
 
-try:
-    from .trade.trade_executor import TradeExecutor
-except ImportError:
-    TradeExecutor = None
+# ========================================================================
+# DATA UTILITIES
+# ========================================================================
+
+from .functions.data import (
+    PolymarketDataCollector,
+    sync_polymarket_data,
+)
+
+# ========================================================================
+# PUBLIC API
+# ========================================================================
 
 __all__ = [
+    # Core clients
     "PolymarketClient",
     "KalshiClient",
-    "ManifoldClient",
-    "MarketEnricher",
     "ValyuResearchClient",
-    "WalletTrackerClient",
-    "InsiderDetectorClient",
-    "AlchemyWebhooksClient",
-    "QuickNodeWebhooksClient",
-    "MoralisStreamsClient",
-    "TraderAnalyticsClient",
-    "TradeExecutor",
+    "TraderAnalytics",
+    "WalletTracker",
+
+    # Data collection
+    "PolymarketDataCollector",
+    "sync_polymarket_data",
+
+    # Wallet intelligence
+    "PolymarketWalletCollector",
+    "enrich_unenriched_events",
+
+    # Trader analysis
+    "PolymarketTraderAnalyzer",
+    "filter_best_traders",
+    "get_best_traders_positions",
+    "get_copy_trade_suggestions",
+    "analyze_smart_money_consensus",
+    "execute_full_trader_analysis",
 ]
