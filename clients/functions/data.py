@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 
 from config.settings import Settings
 from database.client import MarketDatabase
-from clients.polymarket import PolymarketGamma, PolymarketDataAPI
+from clients.polymarket import PolymarketGamma, PolymarketDataAPI, _parse_iso_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -404,10 +404,7 @@ class PolymarketDataCollector:
 
     def _normalize_event_data(self, event: Dict) -> Dict:
         def clean_ts(ts):
-            if not ts:
-                return None
-            ts_str = str(ts)
-            return ts_str if ts_str.endswith('Z') or 'T' in ts_str else None
+            return _parse_iso_datetime(ts) if ts else None
 
         tags = [tag.get('label') if isinstance(tag, dict) else tag for tag in event.get("tags", [])]
         markets = event.get("markets", [])
@@ -431,10 +428,7 @@ class PolymarketDataCollector:
 
     def _normalize_market_data(self, market: Dict, event: Dict) -> Dict:
         def clean_ts(ts):
-            if not ts:
-                return None
-            ts_str = str(ts)
-            return ts_str if ts_str.endswith('Z') or 'T' in ts_str else None
+            return _parse_iso_datetime(ts) if ts else None
 
         prices = market.get("outcomePrices", [])
         yes_price = float(prices[1]) if len(prices) >= 2 and prices[1] is not None else 0.5

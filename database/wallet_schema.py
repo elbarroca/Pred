@@ -19,9 +19,10 @@ class Wallet:
     """Wallet profile and metadata."""
 
     proxy_wallet: str  # Primary key: 0x-prefixed wallet address
-    first_seen_at: Optional[str] = None  # ISO timestamp of first trade
-    last_seen_at: Optional[str] = None  # ISO timestamp of most recent trade
-    last_sync_at: Optional[str] = None  # When we last synced this wallet's data
+    enriched: Optional[bool] = False  # Whether wallet positions/stats have been computed
+    first_seen_at: Optional[datetime] = None  # Timestamp of first trade
+    last_seen_at: Optional[datetime] = None  # Timestamp of most recent trade
+    last_sync_at: Optional[datetime] = None  # When we last synced this wallet's data
 
     # User profile metadata (from Polymarket API)
     name: Optional[str] = None
@@ -36,8 +37,8 @@ class Wallet:
     total_markets: int = 0
     total_volume: float = 0.0
 
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -67,7 +68,7 @@ class Trade:
     outcome: Optional[str] = None
     outcome_index: Optional[int] = None
 
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = None
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -92,16 +93,18 @@ class WalletClosedPosition:
     realized_pnl: float = 0.0  # Profit/loss in USDC
 
     # Timestamps
-    timestamp: int = 0  # Position close timestamp
-    end_date: Optional[str] = None  # Market resolution date
+    timestamp: int = 0  # Position close timestamp (Unix timestamp, keep as int)
+    end_date: Optional[datetime] = None  # Market resolution date
 
     # Market metadata
     title: Optional[str] = None
     slug: Optional[str] = None
     event_slug: Optional[str] = None
+    event_category: Optional[str] = None
+    event_tags: List[str] = field(default_factory=list)
 
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -128,14 +131,14 @@ class WalletStats:
     # Activity metrics
     n_markets: int = 0  # Distinct markets traded
     n_events: int = 0  # Distinct events traded
-    first_trade_at: Optional[str] = None
-    last_trade_at: Optional[str] = None
+    first_trade_at: Optional[datetime] = None
+    last_trade_at: Optional[datetime] = None
 
     # Eligibility flags
     is_eligible: bool = False  # Meets thresholds (≥$10k, ≥20 markets, ≥60% win rate)
     tier: Optional[str] = None  # A/B/C based on score
 
-    computed_at: Optional[str] = None
+    computed_at: Optional[datetime] = None
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -165,7 +168,7 @@ class WalletTagStats:
     n_markets: int = 0
     n_events: int = 0
 
-    computed_at: Optional[str] = None
+    computed_at: Optional[datetime] = None
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -185,10 +188,10 @@ class WalletMarketStats:
 
     # Activity
     n_trades: int = 0
-    first_trade_ts: Optional[int] = None
-    last_trade_ts: Optional[int] = None
+    first_trade_ts: Optional[int] = None  # Unix timestamp (keep as int)
+    last_trade_ts: Optional[int] = None  # Unix timestamp (keep as int)
 
-    computed_at: Optional[str] = None
+    computed_at: Optional[datetime] = None
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -221,7 +224,7 @@ class MarketConcentration:
     # Top wallets (for quick reference)
     top_wallets: Optional[List[str]] = field(default_factory=list)  # Top 10 wallet addresses
 
-    computed_at: Optional[str] = None
+    computed_at: Optional[datetime] = None
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -251,7 +254,7 @@ class WalletScore:
     # Context
     for_event_id: Optional[str] = None  # If scored in context of specific event
 
-    computed_at: Optional[str] = None
+    computed_at: Optional[datetime] = None
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -270,8 +273,8 @@ class EventClosed:
 
     # Status & timing
     status: str = "closed"  # Always "closed" for this table
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
 
     # Aggregated metrics
     market_count: int = 0  # Number of markets in this event
@@ -280,13 +283,13 @@ class EventClosed:
 
     # Resolution details
     resolution_source: Optional[str] = None  # How the event was resolved
-    resolution_date: Optional[str] = None  # When it was resolved
+    resolution_date: Optional[datetime] = None  # When it was resolved
 
     # Metadata
     slug: Optional[str] = None  # URL-friendly identifier
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    synced_at: Optional[str] = None  # When we fetched this data
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    synced_at: Optional[datetime] = None  # When we fetched this data
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -326,10 +329,10 @@ class WalletOpenPosition:
     title: Optional[str] = None
     slug: Optional[str] = None
     event_slug: Optional[str] = None
-    end_date: Optional[str] = None
+    end_date: Optional[datetime] = None
 
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     raw_data: Optional[Dict[str, Any]] = None
 
 

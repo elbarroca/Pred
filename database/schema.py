@@ -16,13 +16,15 @@ class Event:
     description: Optional[str] = None
     category: Optional[str] = None
     status: Optional[str] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
     tags: Optional[List[str]] = None
     market_count: Optional[int] = 0
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     total_liquidity: Optional[float] = 0.0
+    enriched: Optional[bool] = False  # Whether event has been fully enriched with wallet data
+    retrieve_data: Optional[bool] = False  # Whether trades/wallets have been retrieved from this event
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -58,9 +60,9 @@ class Market:
     outcome: Optional[str] = None
 
     # Timestamps
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    close_date: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    close_date: Optional[datetime] = None
 
     # Raw API response for complete data preservation
     raw_data: Optional[Dict[str, Any]] = None
@@ -75,14 +77,16 @@ class EventClosed:
     description: Optional[str] = None
     category: Optional[str] = None
     status: str = "closed"  # Always closed for this table
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
     tags: Optional[List[str]] = None
     market_count: Optional[int] = 0
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     total_liquidity: Optional[float] = 0.0
-    closed_at: Optional[str] = None  # When event was moved to closed table
+    closed_at: Optional[datetime] = None  # When event was moved to closed table
+    enriched: Optional[bool] = False  # Whether event has been fully enriched with wallet data
+    retrieve_data: Optional[bool] = False  # Whether trades/wallets have been retrieved from this event
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -118,10 +122,10 @@ class MarketClosed:
     outcome: Optional[str] = None
 
     # Timestamps
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    close_date: Optional[str] = None
-    closed_at: Optional[str] = None  # When market was moved to closed table
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    close_date: Optional[datetime] = None
+    closed_at: Optional[datetime] = None  # When market was moved to closed table
 
     # Raw API response for complete data preservation
     raw_data: Optional[Dict[str, Any]] = None

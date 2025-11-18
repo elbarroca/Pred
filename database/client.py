@@ -48,16 +48,16 @@ class MarketDatabase:
 
     def _event_to_dict(self, event: Event) -> Dict[str, Any]:
         """Convert Event schema to database record.
-        
+
         Args:
             event: Event object
-            
+
         Returns:
             Dictionary ready for database insertion
         """
         assert event.id, "Event must have id"
         assert event.platform, "Event must have platform"
-        
+
         return {
             "id": event.id,
             "platform": event.platform,
@@ -72,6 +72,8 @@ class MarketDatabase:
             "total_liquidity": event.total_liquidity,
             "created_at": event.created_at,
             "updated_at": event.updated_at,
+            "enriched": event.enriched,
+            "retrieve_data": event.retrieve_data if hasattr(event, 'retrieve_data') else False,
             "raw_data": self._serialize(event.raw_data),
         }
 
@@ -113,10 +115,10 @@ class MarketDatabase:
 
     async def save_event(self, event: Event) -> bool:
         """Save a single event to the database.
-        
+
         Args:
             event: Event object to persist
-            
+
         Returns:
             True if upsert succeeded, False otherwise
         """
@@ -124,6 +126,93 @@ class MarketDatabase:
             data = self._event_to_dict(event)
             result = self.supabase.table("events").upsert(data).execute()
             return len(result.data) > 0
+
+    async def update_event_enriched_status(self, event_id: str, enriched: bool) -> bool:
+        """Update the enriched status of an event.
+
+        Args:
+            event_id: ID of the event to update
+            enriched: New enriched status
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        async with self._lock:
+            result = self.supabase.table("events").update({
+                "enriched": enriched,
+                "updated_at": datetime.utcnow().isoformat()
+            }).eq("id", event_id).execute()
+            return len(result.data) > 0
+
+    async def update_event_closed_enriched_status(self, event_id: str, enriched: bool) -> bool:
+        """Update the enriched status of a closed event.
+
+        Args:
+            event_id: ID of the closed event to update
+            enriched: New enriched status
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        async with self._lock:
+            result = self.supabase.table("events_closed").update({
+                "enriched": enriched,
+                "updated_at": datetime.utcnow().isoformat()
+            }).eq("id", event_id).execute()
+            return len(result.data) > 0
+
+    async def update_event_retrieve_data_status(self, event_id: str, retrieve_data: bool, is_closed: bool = False) -> bool:
+        """Update the retrieve_data status of an event.
+
+        Args:
+            event_id: ID of the event to update
+            retrieve_data: New retrieve_data status
+            is_closed: Whether this is a closed event
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        async with self._lock:
+            table = "events_closed" if is_closed else "events"
+            result = self.supabase.table(table).update({
+                "retrieve_data": retrieve_data,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("id", event_id).execute()
+            return len(result.data) > 0
+
+    async def update_wallet_enriched_status(self, proxy_wallet: str, enriched: bool) -> bool:
+        """Update the enriched status of a wallet.
+
+        Args:
+            proxy_wallet: Wallet address to update
+            enriched: New enriched status
+
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        async with self._lock:
+            result = self.supabase.table("wallets").update({
+                "enriched": enriched,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("proxy_wallet", proxy_wallet).execute()
+            return len(result.data) > 0
+
+    async def get_wallets_needing_enrichment(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get wallets that need enrichment (where enriched=false).
+
+        Args:
+            limit: Maximum number of wallets to retrieve
+
+        Returns:
+            List of wallet records ordered by created_at (oldest first)
+        """
+        result = (self.supabase.table("wallets")
+                 .select("*")
+                 .eq("enriched", False)
+                 .order("created_at", desc=False)
+                 .limit(limit)
+                 .execute())
+        return result.data if result.data else []
 
     async def save_market(self, market: Market) -> bool:
         """Save a single market to the database.

@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -27,243 +28,18 @@ class WalletTracker:
         self.min_volume = min_volume
         self.min_markets = min_markets
         self.min_win_rate = min_win_rate
-        self._event_slug_to_id_cache: Dict[str, str] = {}
-
-    def compute_wallet_stats_from_positions(self, positions: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Compute global wallet statistics from closed positions."""
-        if not positions:
-            return {
-                "total_volume": 0.0, "realized_pnl": 0.0, "roi": 0.0,
-                "n_positions": 0, "n_wins": 0, "n_losses": 0, "win_rate": 0.0,
-                "n_markets": 0, "n_events": 0, "is_eligible": False
-            }
-
-        total_volume = sum(p.get("totalBought") or p.get("total_bought") or 0 for p in positions)
-        realized_pnl = sum(p.get("realizedPnl") or p.get("realized_pnl") or 0 for p in positions)
-        roi = (realized_pnl / total_volume) if total_volume > 0 else 0.0
-
-        n_positions = len(positions)
-        n_wins = sum(1 for p in positions if (p.get("realizedPnl") or p.get("realized_pnl") or 0) > 0)
-        win_rate = n_wins / n_positions if n_positions > 0 else 0.0
-
-        n_markets = len(set(p.get("conditionId") or p.get("condition_id") for p in positions if p.get("conditionId") or p.get("condition_id")))
-        n_events = len(set(p.get("eventSlug") or p.get("event_slug") for p in positions if p.get("eventSlug") or p.get("event_slug")))
-
-        timestamps = [p.get("timestamp") for p in positions if p.get("timestamp")]
-        first_trade_at = last_trade_at = None
-        if timestamps:
-            first_trade_at = datetime.fromtimestamp(min(timestamps), tz=timezone.utc).isoformat()
-            last_trade_at = datetime.fromtimestamp(max(timestamps), tz=timezone.utc).isoformat()
-
-        is_eligible = total_volume >= self.min_volume and n_positions >= self.min_markets and win_rate >= self.min_win_rate
-
-        return {
-            "total_volume": total_volume,
-            "avg_position_size": total_volume / n_positions if n_positions > 0 else 0.0,
-            "realized_pnl": realized_pnl,
-            "roi": roi,
-            "n_positions": n_positions,
-            "n_wins": n_wins,
-            "n_losses": n_positions - n_wins,
-            "win_rate": win_rate,
-            "n_markets": n_markets,
-            "n_events": n_events,
-            "first_trade_at": first_trade_at,
-            "last_trade_at": last_trade_at,
-            "is_eligible": is_eligible,
-            "computed_at": datetime.now(timezone.utc).isoformat()
-        }
-
-    def compute_wallet_tag_stats_with_ids(
-        self,
-        proxy_wallet: str,
-        positions: List[Dict[str, Any]],
-        events_by_slug: Optional[Dict[str, Dict[str, Any]]] = None,
-        events_by_id: Optional[Dict[str, Dict[str, Any]]] = None
-    ) -> List[Dict[str, Any]]:
-        """Compute wallet statistics grouped by event tags with proper IDs."""
-        if not events_by_slug and not events_by_id:
-            return []
-
-        tag_positions: Dict[str, List[Dict[str, Any]]] = {}
-
-        for position in positions:
-            event = None
-            event_slug = position.get("eventSlug") or position.get("event_slug")
-            if events_by_slug and event_slug:
-                event = events_by_slug.get(event_slug)
-            elif events_by_id and position.get("event_id"):
-                event = events_by_id.get(position.get("event_id"))
-
-            if not event:
-                continue
-
-            tags = set(event.get("tags", []))
-            if category := event.get("category"):
-                tags.add(category)
-
-            for tag in tags:
-                tag_positions.setdefault(tag, []).append(position)
-
-        tag_stats = []
-        for tag, tag_pos in tag_positions.items():
-            stats = self.compute_wallet_stats_from_positions(tag_pos)
-            tag_id = hashlib.sha256(f"{proxy_wallet}_{tag}".encode()).hexdigest()[:32]
-            stats["id"] = tag_id
-            stats["proxy_wallet"] = proxy_wallet
-            stats["tag"] = tag
-            stats.pop("is_eligible", None)
-            tag_stats.append(stats)
-
-        return tag_stats
-
-    def compute_wallet_market_stats(
-        self,
-        proxy_wallet: str,
-        positions: List[Dict[str, Any]],
-        trades: Optional[List[Dict[str, Any]]] = None
-    ) -> List[Dict[str, Any]]:
-        """Compute wallet statistics per market (condition_id)."""
-        market_positions: Dict[str, List[Dict[str, Any]]] = {}
-        for pos in positions:
-            condition_id = pos.get("condition_id") or pos.get("conditionId")
-            if condition_id:
-                market_positions.setdefault(condition_id, []).append(pos)
-
-        market_stats = []
-        for condition_id, market_pos in market_positions.items():
-            wallet_volume = sum(p.get("total_bought") or p.get("totalBought") or 0 for p in market_pos)
-            realized_pnl = sum(p.get("realized_pnl") or p.get("realizedPnl") or 0 for p in market_pos)
-
-            timestamps = [p.get("timestamp", 0) for p in market_pos if p.get("timestamp")]
-            first_trade_ts = min(timestamps) if timestamps else None
-            last_trade_ts = max(timestamps) if timestamps else None
-
-            event_id = event_slug = market_title = None
-            for p in market_pos:
-                if not event_id:
-                    event_id = p.get("event_id")
-                if not event_slug:
-                    event_slug = p.get("event_slug") or p.get("eventSlug")
-                if not market_title:
-                    market_title = p.get("title")
-
-            market_stat_id = hashlib.sha256(f"{proxy_wallet}_{condition_id}".encode()).hexdigest()[:32]
-
-            market_stats.append({
-                "id": market_stat_id,
-                "proxy_wallet": proxy_wallet,
-                "event_id": event_id,
-                "condition_id": condition_id,
-                "wallet_volume": wallet_volume,
-                "market_volume": 0.0,
-                "volume_share": 0.0,
-                "n_trades": len(market_pos),
-                "realized_pnl": realized_pnl,
-                "first_trade_ts": first_trade_ts,
-                "last_trade_ts": last_trade_ts,
-                "market_title": market_title,
-                "event_slug": event_slug,
-                "computed_at": datetime.now(timezone.utc).isoformat()
-            })
-
-        return market_stats
-
-    def score_wallet(
-        self,
-        wallet_stats: Dict[str, Any],
-        tag_stats: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """Compute copy-trading score for a wallet."""
-        roi = wallet_stats.get("roi", 0)
-        win_rate = wallet_stats.get("win_rate", 0)
-        total_volume = wallet_stats.get("total_volume", 0)
-        last_trade_at = wallet_stats.get("last_trade_at")
-
-        roi_score = max(0, min(1, (roi + 1) / 2))
-        win_rate_score = win_rate
-        volume_score = min(1, total_volume / 100000.0)
-
-        recency_score = 0.5
-        if last_trade_at:
-            last_trade = datetime.fromisoformat(last_trade_at.replace("Z", "+00:00"))
-            days_ago = (datetime.now(timezone.utc) - last_trade).days
-            recency_score = max(0, 1 - (days_ago / 90))
-
-        roi_tag_score = max(0, min(1, (tag_stats.get("roi", 0) + 1) / 2)) if tag_stats else 0.0
-
-        composite_score = (
-            0.4 * roi_score +
-            0.3 * win_rate_score +
-            0.2 * (roi_tag_score or roi_score) +
-            0.1 * recency_score
-        )
-
-        meets_thresholds = wallet_stats.get("is_eligible", False)
-        tier = None
-        if meets_thresholds:
-            if composite_score >= 0.7:
-                tier = "A"
-            elif composite_score >= 0.5:
-                tier = "B"
-            else:
-                tier = "C"
-
-        return {
-            "roi_score": roi_score,
-            "win_rate_score": win_rate_score,
-            "volume_score": volume_score,
-            "recency_score": recency_score,
-            "roi_tag_score": roi_tag_score,
-            "composite_score": composite_score,
-            "meets_thresholds": meets_thresholds,
-            "tier": tier,
-            "computed_at": datetime.now(timezone.utc).isoformat()
-        }
-
-    def build_events_lookup(self, events: List[Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
-        """Build lookup dicts for events by ID and slug."""
-        events_by_id, events_by_slug = {}, {}
-        for event in events:
-            if event_id := event.get("id"):
-                events_by_id[event_id] = event
-            if event_slug := event.get("slug"):
-                events_by_slug[event_slug] = event
-        return events_by_id, events_by_slug
-
-    def populate_event_slug_cache(self, events_by_slug: Dict[str, Dict[str, Any]]) -> None:
-        """Populate the internal event_slug → event_id cache."""
-        for slug, event in events_by_slug.items():
-            if event_id := event.get("id"):
-                self._event_slug_to_id_cache[slug] = str(event_id)
-
-    async def resolve_event_id_from_slug(self, event_slug: str) -> Optional[str]:
-        """Resolve event_id from event_slug, using cache or fetching from API."""
-        if not event_slug:
-            return None
-
-        if event_slug in self._event_slug_to_id_cache:
-            return self._event_slug_to_id_cache[event_slug]
-
-        event = await self.gamma.get_event(event_slug)
-        if event_id := event.get("id"):
-            self._event_slug_to_id_cache[event_slug] = str(event_id)
-            return str(event_id)
-
-        return None
+        self._event_metadata_cache: Dict[str, Dict[str, Any]] = {}
 
     async def sync_wallet_closed_positions_with_enrichment(
         self,
         proxy_wallet: str,
         save_position: Optional[Callable[[Dict[str, Any]], None]] = None,
-        events_by_slug: Optional[Dict[str, Dict[str, Any]]] = None,
+        save_event: Optional[Callable[[Dict[str, Any]], None]] = None,
         event_ids: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Sync closed positions with automatic event_id enrichment and early termination."""
         assert proxy_wallet, "proxy_wallet required"
-
-        if events_by_slug:
-            self.populate_event_slug_cache(events_by_slug)
+        logger.info("Slow path | wallet=%s | starting closed-position sync", proxy_wallet)
 
         positions = []
         offset = 0
@@ -305,10 +81,7 @@ class WalletTracker:
 
             # Process new positions
             for normalized in new_positions_in_batch:
-                if event_slug := normalized.get("event_slug"):
-                    event_id = await self.resolve_event_id_from_slug(event_slug)
-                    if event_id:
-                        normalized["event_id"] = event_id
+                await self._apply_event_metadata(normalized, save_event)
 
                 if save_position:
                     await save_position(normalized)
@@ -322,7 +95,14 @@ class WalletTracker:
         realized_pnl = sum(p.get("realized_pnl", 0) for p in positions)
         enriched_count = sum(1 for p in positions if p.get("event_id"))
 
-        logger.info(f"Wallet {proxy_wallet[:12]}...: {len(positions)} positions, ${total_volume:,.2f} volume, ${realized_pnl:,.2f} PnL, {enriched_count} enriched")
+        logger.info(
+            "Slow path | wallet=%s | positions=%d enriched=%d volume=%.2f pnl=%.2f",
+            proxy_wallet,
+            len(positions),
+            enriched_count,
+            total_volume,
+            realized_pnl,
+        )
 
         return {
             "wallet": proxy_wallet,
@@ -336,7 +116,7 @@ class WalletTracker:
         self,
         proxy_wallets: List[str],
         save_position: Optional[Callable[[Dict[str, Any]], None]] = None,
-        events_by_slug: Optional[Dict[str, Dict[str, Any]]] = None,
+        save_event: Optional[Callable[[Dict[str, Any]], None]] = None,
         max_concurrency: int = 5,
         progress_callback: Optional[Callable[[str, int, int], None]] = None
     ) -> Dict[str, Any]:
@@ -353,10 +133,6 @@ class WalletTracker:
                 "results": {}
             }
 
-        if events_by_slug:
-            self.populate_event_slug_cache(events_by_slug)
-            logger.debug(f"Cache: Populated {len(events_by_slug)} event slugs")
-
         semaphore = asyncio.Semaphore(max_concurrency)
         total_wallets = len(proxy_wallets)
 
@@ -364,11 +140,18 @@ class WalletTracker:
             async with semaphore:
                 if progress_callback:
                     progress_callback(wallet, idx, total_wallets)
+                logger.info("Slow path | [%d/%d] syncing wallet=%s", idx, total_wallets, wallet)
 
                 result = await self.sync_wallet_closed_positions_with_enrichment(
                     proxy_wallet=wallet,
                     save_position=save_position,
-                    events_by_slug=None
+                    save_event=save_event
+                )
+                logger.info(
+                    "Slow path | wallet=%s complete | positions=%d enriched=%d",
+                    wallet,
+                    result.get("positions_fetched", 0),
+                    result.get("positions_enriched", 0),
                 )
                 return wallet, result
 
@@ -399,64 +182,89 @@ class WalletTracker:
         logger.info(f"Batch complete: {aggregated['wallets_with_positions']}/{aggregated['wallets_processed']} wallets with positions, {aggregated['total_positions']} total positions")
         return aggregated
 
+    @staticmethod
+    def _ensure_list(value: Any) -> List[Any]:
+        """Return value coerced into a list (for Gamma payloads)."""
+        return value if isinstance(value, list) else [value] if value is not None else []
+
+    @staticmethod
+    def _to_float(value: Any) -> float:
+        """Safely convert Gamma numeric fields into floats."""
+        if value in (None, ""):
+            return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @classmethod
+    def _compute_event_metrics(cls, event: Dict[str, Any]) -> Dict[str, float]:
+        """Derive market count, total liquidity, and total volume for an event."""
+        markets = [m for m in cls._ensure_list(event.get("markets", [])) if isinstance(m, dict)]
+        market_count = max(len(markets), int(event.get("marketCount", 0)))
+
+        # Extract liquidity from markets, event, or series (prioritized)
+        total_liquidity = sum(cls._to_float(m.get("liquidityNum") or m.get("liquidityClob") or m.get("liquidity") or 0)
+                            for m in markets) or cls._to_float(event.get("liquidity")) or \
+                         next((cls._to_float(s.get("liquidity", 0))
+                              for s in cls._ensure_list(event.get("series", []))
+                              if isinstance(s, dict) and cls._to_float(s.get("liquidity", 0)) > 0), 0.0)
+
+        # Extract volume from event or sum of markets
+        total_volume = cls._to_float(event.get("volume")) or \
+                      sum(cls._to_float(m.get("volumeNum") or m.get("volumeClob") or m.get("volume_total") or m.get("volume") or 0)
+                          for m in markets)
+
+        return {
+            "market_count": market_count,
+            "total_liquidity": total_liquidity,
+            "total_volume": total_volume,
+        }
+
     def _normalize_wallet_from_trade(self, trade: Dict[str, Any]) -> Dict[str, Any]:
         """Extract wallet profile from trade data."""
         timestamp = trade.get("timestamp", 0)
-        timestamp_iso = datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat() if timestamp else None
-        now_iso = datetime.now(timezone.utc).isoformat()
+        timestamp_dt = datetime.fromtimestamp(timestamp, tz=timezone.utc) if timestamp else None
+        now_dt = datetime.now(timezone.utc).isoformat()
         return {
             "proxy_wallet": trade.get("proxyWallet"),
-            "name": trade.get("name") or "",
-            "pseudonym": trade.get("pseudonym") or "",
-            "bio": trade.get("bio") or "",
-            "profile_image": trade.get("profileImage") or "",
-            "profile_image_optimized": trade.get("profileImageOptimized") or "",
+            "enriched": False,
+            "name": trade.get("name", ""),
+            "pseudonym": trade.get("pseudonym", ""),
+            "bio": trade.get("bio", ""),
+            "profile_image": trade.get("profileImage", ""),
+            "profile_image_optimized": trade.get("profileImageOptimized", ""),
             "display_username_public": trade.get("displayUsernamePublic", False),
-            "first_seen_at": timestamp_iso,
-            "last_seen_at": timestamp_iso,
-            "last_sync_at": now_iso,
+            "first_seen_at": timestamp_dt.isoformat() if timestamp_dt else None,
+            "last_seen_at": timestamp_dt.isoformat() if timestamp_dt else None,
+            "last_sync_at": now_dt,
             "total_trades": 0,
             "total_markets": 0,
             "total_volume": 0.0,
-            "created_at": now_iso,
-            "updated_at": now_iso,
+            "created_at": now_dt,
+            "updated_at": now_dt,
             "raw_data": trade
         }
 
     def _normalize_trade(self, trade: Dict[str, Any], event_id: Optional[str] = None) -> Dict[str, Any]:
-        """Normalize trade data.
-        
-        Uses API's native trade ID if available, otherwise generates from unique fields.
-        This ensures DB records match API responses exactly.
-        """
-        # Use API's native ID if available (most reliable)
-        trade_id = trade.get("id") or trade.get("tradeId")
-        
-        # Fallback: generate from unique fields if API doesn't provide ID
-        if not trade_id:
-            tx_hash = trade.get("transactionHash", "")
-            asset = trade.get("asset", "")
-            timestamp = trade.get("timestamp", 0)
-            condition_id = trade.get("conditionId", "")
-            outcome_index = trade.get("outcomeIndex", 0)
-            # More comprehensive ID generation to ensure uniqueness
-            trade_id = hashlib.sha256(
-                f"{tx_hash}{asset}{condition_id}{outcome_index}{timestamp}".encode()
-            ).hexdigest()[:32]
-        
+        """Normalize trade data with assertive ID generation."""
+        trade_id = trade.get("id") or trade.get("tradeId") or hashlib.sha256(
+            f"{trade.get('transactionHash', '')}{trade.get('asset', '')}{trade.get('conditionId', '')}{trade.get('outcomeIndex', 0)}{trade.get('timestamp', 0)}".encode()
+        ).hexdigest()[:32]
+
         size, price = trade.get("size", 0), trade.get("price", 0)
         return {
-            "id": str(trade_id),  # Ensure string type
+            "id": str(trade_id),
             "proxy_wallet": trade.get("proxyWallet"),
             "event_id": event_id,
             "condition_id": trade.get("conditionId"),
             "side": trade.get("side"),
-            "asset": asset,
+            "asset": trade.get("asset"),
             "size": size,
             "price": price,
             "notional": size * price,
-            "timestamp": timestamp,
-            "transaction_hash": tx_hash,
+            "timestamp": trade.get("timestamp", 0),
+            "transaction_hash": trade.get("transactionHash"),
             "title": trade.get("title"),
             "slug": trade.get("slug"),
             "event_slug": trade.get("eventSlug"),
@@ -471,6 +279,8 @@ class WalletTracker:
         condition_id = position.get("conditionId", "")
         outcome_index = position.get("outcomeIndex", 0)
         pos_id = hashlib.sha256(f"{proxy_wallet}{condition_id}{outcome_index}".encode()).hexdigest()[:32]
+        event_category = position.get("category") or position.get("eventCategory")
+        event_tags = self._extract_tag_labels(position.get("tags") or position.get("eventTags"))
         return {
             "id": pos_id,
             "proxy_wallet": proxy_wallet,
@@ -488,7 +298,103 @@ class WalletTracker:
             "title": position.get("title"),
             "slug": position.get("slug"),
             "event_slug": position.get("eventSlug"),
+            "event_category": event_category,
+            "event_tags": event_tags,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "raw_data": position
         }
+
+    async def _apply_event_metadata(
+        self,
+        position: Dict[str, Any],
+        save_event: Optional[Callable[[Dict[str, Any]], None]]
+    ) -> None:
+        metadata = await self._get_event_metadata(position.get("event_id"), position.get("event_slug"))
+        if not metadata:
+            return
+
+        position.update({
+            k: v for k, v in {
+                "event_id": metadata.get("id"),
+                "event_slug": metadata.get("slug"),
+                "event_category": metadata.get("category") if not position.get("event_category") else None,
+                "event_tags": metadata.get("tags") if not position.get("event_tags") else None,
+            }.items() if v is not None
+        })
+
+        logger.info("Slow path | wallet=%s | enriched event metadata id=%s slug=%s",
+                   position.get("proxy_wallet"), position.get("event_id"), position.get("event_slug"))
+
+        if save_event:
+            await save_event(metadata)
+
+    async def _get_event_metadata(
+        self,
+        event_id: Optional[str],
+        event_slug: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        # Check cache first
+        cache_keys = [k for k in [event_id, f"slug:{event_slug}"] if k]
+        for key in cache_keys:
+            if key in self._event_metadata_cache:
+                return self._event_metadata_cache[key]
+
+        # Fetch event data
+        event = await self.gamma.get_event(event_slug) if event_slug else \
+               (await self.gamma.get_events(limit=1, active=False, id=event_id))[0] if event_id else None
+
+        if not event:
+            return None
+
+        metrics = self._compute_event_metrics(event)
+        metadata = {
+            "id": str(event.get("id", event_id)),
+            "slug": event.get("slug", event_slug),
+            "title": event.get("title"),
+            "description": event.get("description"),
+            "category": event.get("category"),
+            "tags": self._extract_tag_labels(event.get("tags")),
+            "status": "closed" if event.get("closed") else event.get("status", "active"),
+            "start_date": event.get("startDate") or event.get("start_time"),
+            "end_date": event.get("endDate"),
+            "market_count": metrics["market_count"],
+            "total_liquidity": metrics["total_liquidity"],
+            "total_volume": metrics["total_volume"],
+            "platform": "polymarket",
+            "raw": event,
+        }
+
+        # Cache metadata
+        for key in [metadata["id"], metadata["slug"], f"slug:{metadata['slug']}"]:
+            if key:
+                self._event_metadata_cache[key] = metadata
+
+        return metadata
+
+    @staticmethod
+    def _extract_tag_labels(raw_tags: Any) -> List[str]:
+        """Normalize tag payloads into a flat list of strings."""
+        if not raw_tags:
+            return []
+
+        if isinstance(raw_tags, str):
+            text = raw_tags.strip()
+            if not text:
+                return []
+            if text.startswith("["):
+                try:
+                    items = json.loads(text)
+                except json.JSONDecodeError:
+                    return []
+            else:
+                return [text]
+        elif isinstance(raw_tags, list):
+            items = raw_tags
+        else:
+            return []
+
+        return [item if isinstance(item, str) else
+               (item.get("label") or item.get("slug") or item.get("name") or "")
+               for item in items if item and (item if isinstance(item, str) else
+               (item.get("label") or item.get("slug") or item.get("name")))]
