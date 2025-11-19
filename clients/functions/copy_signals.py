@@ -310,6 +310,7 @@ class CopySignalEngine:
             "market_title": pos.get('title'),
             "market_slug": pos.get('slug'),
             "outcome": pos.get('outcome'),
+            "asset_id": pos['asset'], # Ensure this is passed through
             "current_price": use_price,
             "potential_roi_pct": round(potential_roi_pct, 1),
             "days_to_expiry": days_left,
@@ -319,10 +320,10 @@ class CopySignalEngine:
             "category_roi": round(cat_roi, 1),
             "category_trade_count": cat_trades,
             "confidence_score": round(min(effective_wr, 99.9), 1),
-            "raw_kelly": kelly, 
+            "raw_kelly": kelly,
             "rationale": rationale,
             "is_cash_flow_optimized": days_left < self.CASH_FLOW_DAYS,
-            "ev_score": rank_score 
+            "ev_score": rank_score
         }, "Success"
 
     def _optimize_portfolio(self, signals: List[Dict]) -> List[Dict]:

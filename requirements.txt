@@ -95,3 +95,5 @@ mypy==1.13.0                  # Static type checker
 
 # Development Tools
 rich==13.9.4                  # Beautiful terminal output
+web3
+eth_account

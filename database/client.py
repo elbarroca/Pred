@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 
 from supabase import create_client, Client
-from .schema import Event, Market
+from models.database_schema import Event, Market
 
 class MarketDatabase:
     """Async database client for storing prediction market data."""

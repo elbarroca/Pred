@@ -1,0 +1,35 @@
+"""mermaid
+flowchart TD
+    subgraph "Configuration"
+        ENV[.env Settings] --> Config
+        Config -->|PAPER_TRADING=True| Trader
+    end
+
+    subgraph "Data Layer (Supabase)"
+        Signals[(Copy Signals)]
+        Wallets[(Managed Wallets)]
+        Executions[(Trade Executions)]
+    end
+
+    subgraph "Orchestrator (Cron/Serverless)"
+        Trigger((Every 1 Min)) --> Trader[Execution Engine]
+    end
+
+    subgraph "Execution Engine"
+        Trader -->|1. Fetch| Signals
+        Trader -->|2. Fetch| Wallets
+        Trader -->|3. Decrypt| Vault[Security Vault]
+        
+        Trader -->|4. Logic Check| Risk{Risk Manager}
+        
+        Risk -->|Pass| Mode{Is Paper Mode?}
+    end
+
+    subgraph "Action"
+        Mode -->|Yes| Sim[Simulate Fill]
+        Mode -->|No| CLOB[Polymarket API]
+        
+        Sim -->|5. Log Result| Executions
+        CLOB -->|5. Log Result| Executions
+    end
+"""mermaid
