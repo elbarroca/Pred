@@ -2,6 +2,7 @@
 """Asynchronously enrich all wallets in batches of 8-10."""
 
 import asyncio
+import json
 import logging
 import sys
 import time
@@ -31,6 +32,46 @@ class BatchWalletEnricher:
         self.db = MarketDatabase(self.settings.SUPABASE_URL, self.settings.SUPABASE_KEY)
         self.collector = PolymarketWalletCollector()
         self.batch_size = batch_size
+        self.checkpoint_file = Path(__file__).parent / "batch_enrichment_checkpoint.json"
+
+    def _save_checkpoint(self, processed_wallets: int, successful_wallets: int, last_wallet_batch: List[str]):
+        """Save progress checkpoint for crash recovery."""
+        checkpoint = {
+            "processed_wallets": processed_wallets,
+            "successful_wallets": successful_wallets,
+            "last_wallet_batch": last_wallet_batch,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "batch_size": self.batch_size
+        }
+        try:
+            with open(self.checkpoint_file, 'w') as f:
+                json.dump(checkpoint, f, indent=2)
+            logger.info(f"💾 Checkpoint saved: {processed_wallets} processed, {successful_wallets} successful")
+        except Exception as e:
+            logger.error(f"Failed to save checkpoint: {e}")
+
+    def _load_checkpoint(self) -> Dict:
+        """Load progress checkpoint for crash recovery."""
+        if not self.checkpoint_file.exists():
+            return {}
+
+        try:
+            with open(self.checkpoint_file, 'r') as f:
+                checkpoint = json.load(f)
+            logger.info(f"📂 Checkpoint loaded: {checkpoint.get('processed_wallets', 0)} processed, {checkpoint.get('successful_wallets', 0)} successful")
+            return checkpoint
+        except Exception as e:
+            logger.error(f"Failed to load checkpoint: {e}")
+            return {}
+
+    def _clear_checkpoint(self):
+        """Clear checkpoint file after successful completion."""
+        try:
+            if self.checkpoint_file.exists():
+                self.checkpoint_file.unlink()
+                logger.info("🗑️  Checkpoint cleared - process completed successfully")
+        except Exception as e:
+            logger.warning(f"Failed to clear checkpoint: {e}")
 
     async def get_unenriched_wallets(self) -> List[str]:
         """Get all unenriched wallets using pagination."""
@@ -76,13 +117,43 @@ class BatchWalletEnricher:
                         if event.get("id"):
                             self.collector._saved_events_cache.add(event["id"])
 
-                # Enrich wallet
+                # Track sample IDs for data integrity verification
+                saved_position_ids = []
+                saved_event_ids = []
+
+                async def verified_position_batch(positions):
+                    await self.collector._bulk_upsert("wallet_closed_positions", positions)
+                    # Collect sample IDs for verification
+                    for pos in positions[:5]:  # Sample first 5 positions
+                        if pos.get("id"):
+                            saved_position_ids.append(pos["id"])
+
+                async def verified_event_batch(events):
+                    await self.collector._bulk_upsert("events_closed", events)
+                    # Collect sample IDs for verification
+                    for event in events[:3]:  # Sample first 3 events
+                        if event.get("id"):
+                            saved_event_ids.append(event["id"])
+
+                # Enrich wallet with verified saving
                 result = await self.collector.wallet_tracker.sync_wallet_closed_positions_with_enrichment(
                     proxy_wallet=wallet_addr,
-                    save_position_batch=lambda positions: self.collector._bulk_upsert("wallet_closed_positions", positions),
-                    save_event_batch=save_event_batch_filtered,
+                    save_position_batch=verified_position_batch,
+                    save_event_batch=verified_event_batch,
                     last_synced_timestamp=last_ts
                 )
+
+                # Verify data integrity
+                positions_integrity = await self.collector._verify_data_integrity(
+                    "wallet_closed_positions", result.get("positions_fetched", 0), saved_position_ids
+                )
+                events_integrity = await self.collector._verify_data_integrity(
+                    "events_closed", len(saved_event_ids), saved_event_ids
+                )
+
+                if not positions_integrity or not events_integrity:
+                    logger.error(f"❌ DATA INTEGRITY FAILURE for wallet {wallet_addr[:10]}... - will retry next run")
+                    return {"wallet": wallet_addr, "success": False, "error": "Data integrity check failed"}
 
                 # Discover additional wallets
                 event_ids = result.get("event_ids", [])
@@ -99,11 +170,14 @@ class BatchWalletEnricher:
 
             except Exception as e:
                 logger.error(f"❌ Failed {wallet_addr[:10]}...: {e}")
-                # Still mark as enriched to prevent infinite retries
-                try:
-                    await self.collector._mark_wallet_enriched_single(wallet_addr)
-                except Exception as mark_e:
-                    logger.error(f"Failed to mark failed wallet {wallet_addr[:10]}...: {mark_e}")
+                # DO NOT mark as enriched - allow retry on next run with improved error handling
+                # Only mark as enriched if the failure is due to permanent issues (like invalid wallet)
+                if "invalid" in str(e).lower() or "not found" in str(e).lower():
+                    try:
+                        await self.collector._mark_wallet_enriched_single(wallet_addr)
+                        logger.warning(f"⚠️  Marked permanently failed wallet {wallet_addr[:10]}... as enriched")
+                    except Exception as mark_e:
+                        logger.error(f"Failed to mark permanently failed wallet {wallet_addr[:10]}...: {mark_e}")
                 return {"wallet": wallet_addr, "success": False, "error": str(e)}
 
         # Process batch concurrently
@@ -125,19 +199,35 @@ class BatchWalletEnricher:
         }
 
     async def enrich_all_wallets(self) -> Dict[str, any]:
-        """Enrich all unenriched wallets in batches."""
+        """Enrich all unenriched wallets in batches with checkpoint recovery."""
         start_time = time.time()
-        total_processed = 0
-        total_successful = 0
+
+        # Load checkpoint for crash recovery
+        checkpoint = self._load_checkpoint()
+        total_processed = checkpoint.get("processed_wallets", 0)
+        total_successful = checkpoint.get("successful_wallets", 0)
+        last_processed_batch = checkpoint.get("last_wallet_batch", [])
+
         total_positions = 0
         total_volume = 0.0
         total_discovered = 0
 
         logger.info("Starting batch wallet enrichment process")
+        if checkpoint:
+            logger.info(f"🔄 Resuming from checkpoint: {total_processed} already processed, {total_successful} successful")
+            # Skip wallets that were already processed in the last batch
+            if last_processed_batch:
+                logger.info(f"⏭️  Skipping last incomplete batch: {len(last_processed_batch)} wallets")
 
         while True:
             # Get current unenriched wallets
             unenriched_wallets = await self.get_unenriched_wallets()
+
+            # If resuming from checkpoint, skip wallets already processed
+            if checkpoint and last_processed_batch:
+                # Remove wallets that were in the last incomplete batch
+                unenriched_wallets = [w for w in unenriched_wallets if w not in last_processed_batch]
+                last_processed_batch = []  # Clear after first use
 
             if not unenriched_wallets:
                 logger.info("No more unenriched wallets found")
@@ -149,6 +239,13 @@ class BatchWalletEnricher:
             # Process next batch
             current_batch = unenriched_wallets[:self.batch_size]
             batch_result = await self.enrich_wallet_batch(current_batch)
+
+            # Save checkpoint after each batch
+            self._save_checkpoint(
+                total_processed + batch_result["batch_size"],
+                total_successful + batch_result["successful"],
+                current_batch
+            )
 
             # Update totals
             total_processed += batch_result["batch_size"]
@@ -176,6 +273,10 @@ class BatchWalletEnricher:
             await asyncio.sleep(1)
 
         elapsed_total = time.time() - start_time
+
+        # Clear checkpoint on successful completion
+        self._clear_checkpoint()
+
         return {
             "total_processed": total_processed,
             "total_successful": total_successful,
@@ -191,15 +292,31 @@ class BatchWalletEnricher:
 
 async def main():
     """Run batch wallet enrichment."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Batch wallet enrichment with crash recovery")
+    parser.add_argument("--restart", action="store_true", help="Force restart from beginning (ignore checkpoint)")
+    parser.add_argument("--batch-size", type=int, default=50, help="Batch size for processing (default: 50)")
+    args = parser.parse_args()
+
     print("\n" + "=" * 60)
     print("BATCH WALLET ENRICHMENT PROCESS")
     print("=" * 60)
-    print("Asynchronously enriching all wallets in batches of 50")
+    print("Asynchronously enriching all wallets in batches")
+    print("Features: Crash recovery, data integrity checks, retry logic")
     print("Designed for large-scale processing (63k+ wallets)")
     print("This process may take several hours to complete")
+    if args.restart:
+        print("🔄 FORCE RESTART: Ignoring any existing checkpoint")
     print("=" * 60)
 
-    enricher = BatchWalletEnricher()  # Uses default batch_size=50
+    enricher = BatchWalletEnricher(batch_size=args.batch_size)
+
+    # Handle force restart
+    if args.restart and enricher.checkpoint_file.exists():
+        enricher._clear_checkpoint()
+        print("🗑️  Cleared existing checkpoint for fresh start")
+
     result = await enricher.enrich_all_wallets()
 
     print("\n📊 Final Results:")

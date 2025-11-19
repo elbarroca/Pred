@@ -275,16 +275,32 @@ class WalletTracker:
         }
 
     def _normalize_closed_position(self, position: Dict[str, Any], proxy_wallet: str) -> Dict[str, Any]:
-        """Normalize closed position data."""
+        """Normalize closed position data with improved event metadata extraction."""
         condition_id = position.get("conditionId", "")
         outcome_index = position.get("outcomeIndex", 0)
         pos_id = hashlib.sha256(f"{proxy_wallet}{condition_id}{outcome_index}".encode()).hexdigest()[:32]
+
+        # Extract event metadata with multiple fallback strategies
         event_category = position.get("category") or position.get("eventCategory")
         event_tags = self._extract_tag_labels(position.get("tags") or position.get("eventTags"))
+
+        # Try to extract event_slug from various possible fields
+        event_slug = (position.get("eventSlug") or
+                     position.get("event_slug") or
+                     position.get("slug"))  # fallback to market slug if no event slug
+
+        # Try to derive event_id from available data
+        event_id = None
+        if event_slug:
+            # Check if we have cached metadata for this slug
+            cached_metadata = self._event_metadata_cache.get(f"slug:{event_slug}")
+            if cached_metadata:
+                event_id = cached_metadata.get("id")
+
         return {
             "id": pos_id,
             "proxy_wallet": proxy_wallet,
-            "event_id": None,
+            "event_id": event_id,  # Now populated if available from cache
             "condition_id": condition_id,
             "asset": position.get("asset"),
             "outcome": position.get("outcome"),
@@ -297,7 +313,7 @@ class WalletTracker:
             "end_date": position.get("endDate"),
             "title": position.get("title"),
             "slug": position.get("slug"),
-            "event_slug": position.get("eventSlug"),
+            "event_slug": event_slug,  # Improved extraction
             "event_category": event_category,
             "event_tags": event_tags,
             "created_at": datetime.now(timezone.utc).isoformat(),

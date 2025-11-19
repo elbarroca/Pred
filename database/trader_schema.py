@@ -14,8 +14,8 @@ from typing import Dict, List, Optional, Any
 
 
 @dataclass
-class WalletOpenPosition:
-    """Current open position with unrealized PnL."""
+class EliteOpenPosition:
+    """Current elite open position with unrealized PnL."""
 
     id: str  # Primary key: proxy_wallet + condition_id + outcome_index
     proxy_wallet: str  # Foreign key to wallets
@@ -43,6 +43,55 @@ class WalletOpenPosition:
 
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    raw_data: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class EliteTraderPerformance:
+    """Elite trader performance metrics vs market average, organized by trade end date."""
+
+    id: str  # Primary key: proxy_wallet + event_id + end_date
+    proxy_wallet: str  # Foreign key to wallets
+    event_id: str  # Foreign key to events (ensures canonical organization)
+    event_title: Optional[str] = None
+    event_category: Optional[str] = None
+
+    # Time-based organization (canonical)
+    trade_end_date: datetime  # When the market resolved (for chronological sorting)
+    analysis_period_days: int = 30  # Lookback period for market average calculation
+
+    # Trader performance metrics
+    trader_total_positions: int = 0  # Number of positions in this event
+    trader_total_volume: float = 0.0  # Total USDC traded
+    trader_realized_pnl: float = 0.0  # Total realized PnL
+    trader_roi: float = 0.0  # Return on investment (PnL / volume)
+    trader_win_rate: float = 0.0  # Percentage of winning positions
+    trader_avg_position_size: float = 0.0  # Average position size
+    trader_entry_timing_score: float = 0.0  # How early/late trader entered vs market
+
+    # Market average metrics (benchmark)
+    market_total_positions: int = 0  # Total positions by all traders in event
+    market_total_volume: float = 0.0  # Total market volume
+    market_avg_roi: float = 0.0  # Average ROI across all traders
+    market_win_rate: float = 0.0  # Market-wide win rate
+    market_avg_position_size: float = 0.0  # Average position size across market
+    market_participation_rate: float = 0.0  # Percentage of market volume by trader
+
+    # Performance vs market (key metrics)
+    roi_vs_market: float = 0.0  # trader_roi - market_avg_roi
+    win_rate_vs_market: float = 0.0  # trader_win_rate - market_win_rate
+    volume_vs_market_percentile: float = 0.0  # Trader's volume percentile in market
+    timing_vs_market_percentile: float = 0.0  # Entry timing percentile
+
+    # Canonical performance score (composite)
+    canonical_performance_score: float = 0.0  # Weighted score combining all metrics
+
+    # Activity metrics
+    trader_rank_in_event: int = 0  # Rank by volume in this event
+    total_traders_in_event: int = 0  # Total number of traders in event
+
+    # Metadata
+    computed_at: datetime  # When this analysis was computed
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -197,13 +246,14 @@ class TraderProfile:
     market_positions: Optional[List[TraderMarketPosition]] = field(default_factory=list)
 
     # Open positions (optional list)
-    open_positions: Optional[List[WalletOpenPosition]] = field(default_factory=list)
+    open_positions: Optional[List[EliteOpenPosition]] = field(default_factory=list)
 
     raw_data: Optional[Dict[str, Any]] = None
 
 
 # Type aliases for convenience
-OpenPositionList = List[WalletOpenPosition]
+EliteOpenPositionList = List[EliteOpenPosition]
+EliteTraderPerformanceList = List[EliteTraderPerformance]
 RadarMetricsList = List[WalletRadarMetrics]
 TagCredibilityList = List[TraderTagCredibility]
 MarketPositionList = List[TraderMarketPosition]

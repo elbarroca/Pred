@@ -300,7 +300,7 @@ class PipelineTestOrchestrator:
             "events", "events_closed", "markets", "markets_closed",
             "wallet", "trades", "wallet_positions", "wallet_stats",
             "wallet_tag_stats", "wallet_market_stats", "wallet_scores",
-            "wallet_open_positions", "trader_tag_credibility"
+            "elite_open_positions", "trader_tag_credibility"
         ]
 
         snapshot = {}

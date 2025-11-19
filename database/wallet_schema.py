@@ -334,5 +334,5 @@ class WalletOpenPosition:
 WalletList = List[Wallet]
 TradeList = List[Trade]
 PositionList = List[WalletClosedPosition]
-OpenPositionList = List[WalletOpenPosition]
+EliteOpenPositionList = List[EliteOpenPosition]
 ClosedEventList = List[EventClosed]
