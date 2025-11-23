@@ -57,8 +57,38 @@ export async function fetchEliteTraders(page = 1, categories: string[] = []) {
   const { data, count, error } = await query;
   if (error) throw error;
 
+  // 3. Get open positions count for these traders
+  if (!data || data.length === 0) {
+    return {
+      data: [] as EliteTrader[],
+      total: count || 0
+    };
+  }
+
+  const walletAddresses = data.map(t => t.proxy_wallet);
+
+  const { data: positionCounts } = await supabase
+    .from('elite_open_positions')
+    .select('proxy_wallet')
+    .in('proxy_wallet', walletAddresses);
+
+  // Count positions per wallet
+  const openPositionsMap = new Map<string, number>();
+  if (positionCounts) {
+    positionCounts.forEach(p => {
+      const currentCount = openPositionsMap.get(p.proxy_wallet) || 0;
+      openPositionsMap.set(p.proxy_wallet, currentCount + 1);
+    });
+  }
+
+  // Merge the data
+  const tradersWithOpenPositions = data.map((trader: any) => ({
+    ...trader,
+    n_open_positions: openPositionsMap.get(trader.proxy_wallet) || 0
+  }));
+
   return {
-    data: data as EliteTrader[],
+    data: tradersWithOpenPositions as EliteTrader[],
     total: count || 0
   };
 }

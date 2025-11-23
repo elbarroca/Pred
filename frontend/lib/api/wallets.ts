@@ -5,7 +5,7 @@ const ITEMS_PER_PAGE = 20;
 
 export async function fetchWallets(
   page: number = 1,
-  sortBy: keyof WalletAnalytics = 'realized_pnl', 
+  sortBy: keyof WalletAnalytics = 'realized_pnl',
   ascending = false,
   searchQuery = ''
 ) {
@@ -23,9 +23,9 @@ export async function fetchWallets(
   }
 
   const { data, count, error } = await query;
-  
+
   if (error) throw error;
-  
+
   return {
     data: data as WalletAnalytics[],
     total: count || 0,
@@ -33,14 +33,22 @@ export async function fetchWallets(
   };
 }
 
-export async function fetchWalletTrades(walletId: string) {
-  const { data, error } = await supabase
+export async function fetchWalletTrades(walletId: string, page: number = 1, limit: number = 50) {
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  const { data, count, error } = await supabase
     .from('wallet_closed_positions')
-    .select('*')
+    .select('*', { count: 'exact' })
     .eq('proxy_wallet', walletId)
     .order('timestamp', { ascending: false })
-    .limit(50); // Fetch last 50 trades for the drawer
+    .range(from, to);
 
   if (error) throw error;
-  return data as ClosedPosition[];
+
+  return {
+    data: data as ClosedPosition[],
+    total: count || 0,
+    totalPages: Math.ceil((count || 0) / limit)
+  };
 }
