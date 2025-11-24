@@ -26,8 +26,37 @@ export async function fetchWallets(
 
   if (error) throw error;
 
+  if (!data || data.length === 0) {
+    return {
+      data: [] as WalletAnalytics[],
+      total: count || 0,
+      totalPages: 0
+    };
+  }
+
+  // Fetch wallet metadata separately
+  const walletAddresses = data.map(w => w.proxy_wallet);
+  const { data: walletMetadata } = await supabase
+    .from('wallets')
+    .select('proxy_wallet, pseudonym, name, profile_image, bio')
+    .in('proxy_wallet', walletAddresses);
+
+  // Create a map for quick lookup
+  const metadataMap = new Map(
+    walletMetadata?.map(w => [w.proxy_wallet, w]) || []
+  );
+
+  // Merge analytics data with wallet metadata
+  const mergedData = data.map(wallet => ({
+    ...wallet,
+    pseudonym: metadataMap.get(wallet.proxy_wallet)?.pseudonym || null,
+    name: metadataMap.get(wallet.proxy_wallet)?.name || null,
+    profile_image: metadataMap.get(wallet.proxy_wallet)?.profile_image || null,
+    bio: metadataMap.get(wallet.proxy_wallet)?.bio || null,
+  }));
+
   return {
-    data: data as WalletAnalytics[],
+    data: mergedData as WalletAnalytics[],
     total: count || 0,
     totalPages: Math.ceil((count || 0) / ITEMS_PER_PAGE)
   };

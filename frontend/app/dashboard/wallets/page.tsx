@@ -5,8 +5,9 @@ import { fetchWallets } from '@/lib/api/wallets';
 import { WalletAnalytics } from '@/types/database';
 import WalletDrawer from '@/components/wallets/WalletDrawer';
 import { Input } from '@/components/ui/input';
-import { Search, ArrowUpDown, ChevronLeft, ChevronRight, Loader2, Trophy, TrendingUp, Activity } from 'lucide-react';
+import { Search, ArrowUpDown, ChevronLeft, ChevronRight, Loader2, Trophy, TrendingUp, Activity, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getWalletDisplayName, getWalletAvatar } from '@/lib/utils/wallet-display';
 
 export default function WalletsPage() {
   // Data State
@@ -180,8 +181,28 @@ export default function WalletsPage() {
                     className="group hover:bg-white/[0.02] transition-colors cursor-pointer"
                   >
                     <td className="p-4 pl-6">
-                      <div className="font-mono text-zinc-300 group-hover:text-blue-400 transition-colors truncate w-32 md:w-48">
-                        {wallet.proxy_wallet}
+                      <div className="flex items-center gap-3">
+                        {getWalletAvatar(wallet) ? (
+                          <img
+                            src={getWalletAvatar(wallet)!}
+                            alt={getWalletDisplayName(wallet)}
+                            className="w-8 h-8 rounded-lg object-cover bg-zinc-800 border border-white/10 flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-zinc-800 to-zinc-900 border border-white/10 flex items-center justify-center flex-shrink-0">
+                            <User className="w-4 h-4 text-zinc-500" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-zinc-200 group-hover:text-blue-400 transition-colors truncate">
+                            {getWalletDisplayName(wallet)}
+                          </div>
+                          {(wallet.pseudonym || wallet.name) && (
+                            <div className="font-mono text-xs text-zinc-500 truncate">
+                              {wallet.proxy_wallet.slice(0, 10)}...{wallet.proxy_wallet.slice(-4)}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="p-4">
@@ -239,9 +260,22 @@ export default function WalletsPage() {
               >
                 {/* Header */}
                 <div className="flex justify-between items-start mb-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="font-mono text-sm text-white truncate">{wallet.proxy_wallet}</div>
-                    <div className="text-xs text-zinc-500 mt-0.5">{wallet.n_positions} Trades</div>
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    {getWalletAvatar(wallet) ? (
+                      <img
+                        src={getWalletAvatar(wallet)!}
+                        alt={getWalletDisplayName(wallet)}
+                        className="w-10 h-10 rounded-lg object-cover bg-zinc-800 border border-white/10 flex-shrink-0"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-zinc-800 to-zinc-900 border border-white/10 flex items-center justify-center flex-shrink-0">
+                        <User className="w-5 h-5 text-zinc-500" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm text-white truncate">{getWalletDisplayName(wallet)}</div>
+                      <div className="text-xs text-zinc-500 mt-0.5">{wallet.n_positions} Trades</div>
+                    </div>
                   </div>
                   <span className={cn("px-2 py-1 rounded text-xs font-bold border ml-2 flex-shrink-0",
                     wallet.tier === 'S' ? "bg-amber-500/10 text-amber-400 border-amber-500/20" :

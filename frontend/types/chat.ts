@@ -27,7 +27,8 @@ export interface ElitePosition {
 
 export interface AlphaPositionsData {
   type: 'positions';
-  data: ElitePosition[];
+  data?: ElitePosition[];
+  params?: { category?: string };
 }
 
 export interface Fund {
@@ -41,7 +42,8 @@ export interface Fund {
 
 export interface FundsData {
   type: 'funds';
-  data: Fund[];
+  data?: Fund[];
+  params?: { risk_tolerance?: string };
   message: string;
 }
 
@@ -57,8 +59,9 @@ export interface TradeResultData {
 
 export interface PnLData {
   type: 'pnl';
-  daily: string;
-  all_time: string;
+  daily?: string;
+  all_time?: string;
+  params?: {};
   message: string;
 }
 
@@ -70,11 +73,11 @@ export interface ChatMessage {
   content: string;
   isStreaming?: boolean;
   timestamp: number;
-  
+
   // Reasoning & Tools
   toolInvocations?: ToolInvocation[];
   thoughts?: string[]; // The "Thinking..." steps
-  
+
   // Widgets
   widgetType?: WidgetType;
   widgetData?: WidgetData;

@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { X, ExternalLink, ArrowRight, Activity, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, ExternalLink, ArrowRight, Activity, Loader2, ChevronLeft, ChevronRight, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { WalletAnalytics } from '@/types/database';
 import { fetchWalletTrades } from '@/lib/api/wallets';
 import { cn } from '@/lib/utils';
+import { getWalletDisplayName, getWalletAvatar, formatWalletAddress } from '@/lib/utils/wallet-display';
 
 interface WalletDrawerProps {
   wallet: WalletAnalytics | null;
@@ -38,6 +39,9 @@ export default function WalletDrawer({ wallet, onClose }: WalletDrawerProps) {
   const cents = (n: number | null) =>
     (n || 0).toFixed(2);
 
+  const displayName = getWalletDisplayName(wallet);
+  const avatarUrl = getWalletAvatar(wallet);
+
   return (
     <AnimatePresence>
       {wallet && (
@@ -59,17 +63,46 @@ export default function WalletDrawer({ wallet, onClose }: WalletDrawerProps) {
             <div className="p-4 md:p-8 pb-4 md:pb-6 border-b border-white/10 bg-[#0c0c0c]">
               <div className="flex justify-between items-start mb-4 md:mb-6 gap-2">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <span className={cn("px-2 py-0.5 rounded text-xs font-bold border",
-                      wallet.tier === 'S' ? "bg-amber-500/10 text-amber-400 border-amber-500/20" :
-                        wallet.tier === 'A' ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
-                          "bg-blue-500/10 text-blue-400 border-blue-500/20"
-                    )}>Tier {wallet.tier || 'N/A'}</span>
-                    <span className="text-zinc-500 text-xs font-mono">{new Date().toLocaleDateString()}</span>
+                  {/* Wallet Identity */}
+                  <div className="flex items-start gap-3 mb-4">
+                    {/* Avatar */}
+                    <div className="relative flex-shrink-0">
+                      {avatarUrl ? (
+                        <img
+                          src={avatarUrl}
+                          alt={displayName}
+                          className="w-12 h-12 md:w-16 md:h-16 rounded-xl object-cover bg-zinc-800 border border-white/10"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 md:w-16 md:h-16 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-white/10 flex items-center justify-center">
+                          <User className="w-6 h-6 md:w-8 md:h-8 text-zinc-500" />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Name & Address */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <span className={cn("px-2 py-0.5 rounded text-xs font-bold border",
+                          wallet.tier === 'S' ? "bg-amber-500/10 text-amber-400 border-amber-500/20" :
+                            wallet.tier === 'A' ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
+                              "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                        )}>Tier {wallet.tier || 'N/A'}</span>
+                        <span className="text-zinc-500 text-xs font-mono">{new Date().toLocaleDateString()}</span>
+                      </div>
+                      <h2 className="text-base md:text-xl lg:text-2xl font-bold text-white mb-1">
+                        {displayName}
+                      </h2>
+                      <p className="text-xs md:text-sm font-mono text-zinc-500 break-all">
+                        {wallet.proxy_wallet}
+                      </p>
+                      {wallet.bio && (
+                        <p className="text-xs md:text-sm text-zinc-400 mt-2 line-clamp-2">
+                          {wallet.bio}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <h2 className="text-base md:text-xl lg:text-2xl font-bold text-white font-mono break-words">
-                    {wallet.proxy_wallet}
-                  </h2>
                 </div>
                 <button onClick={onClose} className="p-2 bg-white/5 hover:bg-white/10 rounded-full transition-colors flex-shrink-0">
                   <X className="w-5 h-5 text-zinc-400" />

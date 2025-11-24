@@ -67,6 +67,18 @@ export async function fetchEliteTraders(page = 1, categories: string[] = []) {
 
   const walletAddresses = data.map(t => t.proxy_wallet);
 
+  // Fetch wallet metadata separately
+  const { data: walletMetadata } = await supabase
+    .from('wallets')
+    .select('proxy_wallet, pseudonym, name, profile_image')
+    .in('proxy_wallet', walletAddresses);
+
+  // Create metadata map
+  const metadataMap = new Map(
+    walletMetadata?.map(w => [w.proxy_wallet, w]) || []
+  );
+
+  // Fetch open positions count
   const { data: positionCounts } = await supabase
     .from('elite_open_positions')
     .select('proxy_wallet')
@@ -81,14 +93,17 @@ export async function fetchEliteTraders(page = 1, categories: string[] = []) {
     });
   }
 
-  // Merge the data
-  const tradersWithOpenPositions = data.map((trader: any) => ({
+  // Merge the data with wallet metadata and open positions
+  const tradersWithDetails = data.map((trader: any) => ({
     ...trader,
+    pseudonym: metadataMap.get(trader.proxy_wallet)?.pseudonym || null,
+    name: metadataMap.get(trader.proxy_wallet)?.name || null,
+    profile_image: metadataMap.get(trader.proxy_wallet)?.profile_image || null,
     n_open_positions: openPositionsMap.get(trader.proxy_wallet) || 0
   }));
 
   return {
-    data: tradersWithOpenPositions as EliteTrader[],
+    data: tradersWithDetails as EliteTrader[],
     total: count || 0
   };
 }

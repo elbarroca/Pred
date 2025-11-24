@@ -1,5 +1,8 @@
 export interface EliteTrader {
   proxy_wallet: string;
+  pseudonym?: string | null;
+  name?: string | null;
+  profile_image?: string | null;
   tier: string;
   rank_in_tier: number;
   total_volume: number | null;

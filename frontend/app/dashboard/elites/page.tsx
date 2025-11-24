@@ -5,9 +5,10 @@ import { fetchEliteTraders, fetchEliteTags, fetchEventCategories } from '@/lib/a
 import { EliteTrader, EliteTagComparison } from '@/types/elite';
 import ElitePerformanceChart from '@/components/elites/ElitePerformanceChart';
 import ElitePositionsDrawer from '@/components/elites/ElitePositionsDrawer';
-import { ChevronLeft, ChevronRight, Crown, LayoutGrid, List, Filter, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Crown, LayoutGrid, List, Filter, X, ChevronDown, ChevronUp, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
+import { getWalletDisplayName, getWalletAvatar } from '@/lib/utils/wallet-display';
 
 export default function EliteWalletsPage() {
   const [activeTab, setActiveTab] = useState<'sectors' | 'traders'>('sectors');
@@ -442,7 +443,29 @@ export default function EliteWalletsPage() {
                         </div>
                       </td>
                       <td className="p-4 font-mono text-zinc-300 group-hover:text-blue-400 transition-colors truncate max-w-[200px]">
-                        {trader.proxy_wallet}
+                        <div className="flex items-center gap-3">
+                          {getWalletAvatar(trader) ? (
+                            <img
+                              src={getWalletAvatar(trader)!}
+                              alt={getWalletDisplayName(trader)}
+                              className="w-8 h-8 rounded-lg object-cover bg-zinc-800 border border-white/10 flex-shrink-0"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-zinc-800 to-zinc-900 border border-white/10 flex items-center justify-center flex-shrink-0">
+                              <User className="w-4 h-4 text-zinc-500" />
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium text-zinc-200 group-hover:text-blue-400 transition-colors truncate">
+                              {getWalletDisplayName(trader)}
+                            </div>
+                            {(trader.pseudonym || trader.name) && (
+                              <div className="font-mono text-xs text-zinc-500 truncate">
+                                {trader.proxy_wallet.slice(0, 10)}...{trader.proxy_wallet.slice(-4)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="p-4 text-center">
                         {(trader.n_open_positions || 0) > 0 ? (
@@ -505,10 +528,23 @@ export default function EliteWalletsPage() {
                       )}>
                         {trader.rank_in_tier}
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="font-mono text-sm text-white truncate">{trader.proxy_wallet}</div>
-                        <div className="text-xs text-zinc-500">
-                          {trader.n_positions || 0} {(trader.n_positions || 0) === 1 ? 'Position' : 'Positions'}
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        {getWalletAvatar(trader) ? (
+                          <img
+                            src={getWalletAvatar(trader)!}
+                            alt={getWalletDisplayName(trader)}
+                            className="w-10 h-10 rounded-lg object-cover bg-zinc-800 border border-white/10 flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-zinc-800 to-zinc-900 border border-white/10 flex items-center justify-center flex-shrink-0">
+                            <User className="w-5 h-5 text-zinc-500" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-sm text-white truncate">{getWalletDisplayName(trader)}</div>
+                          <div className="text-xs text-zinc-500">
+                            {trader.n_positions || 0} {(trader.n_positions || 0) === 1 ? 'Position' : 'Positions'}
+                          </div>
                         </div>
                       </div>
                     </div>

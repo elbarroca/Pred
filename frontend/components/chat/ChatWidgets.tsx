@@ -8,6 +8,7 @@ import {
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ToolInvocation, AlphaPositionsData, FundsData, TradeResultData, PnLData, Fund } from '@/types/chat';
+import { useElitePositions, useAvailableFunds, usePnL } from '@/lib/hooks/use-queries';
 
 // --- 0. THOUGHT / REASONING LOG ---
 export function ThoughtLog({ thoughts }: { thoughts: string[] }) {
@@ -100,7 +101,24 @@ export function ToolLog({ tools }: { tools: ToolInvocation[] }) {
 }
 
 // --- 1. ALPHA POSITIONS (High-End Trading Card) ---
-export function AlphaCard({ data }: { data: AlphaPositionsData }) {
+export function AlphaCard({ data }: { data: { params?: { category?: string } } | AlphaPositionsData }) {
+  // Handle both old (direct data) and new (params) formats
+  const params = 'params' in data ? data.params || {} : {};
+  const { data: positions, isLoading } = useElitePositions(params.category);
+
+  // Use passed data if available (legacy support) or fetched data
+  const displayData = 'data' in data ? data.data : positions;
+
+  if (isLoading && !displayData) {
+    return (
+      <div className="my-4 w-full max-w-md bg-[#0a0a0a] border border-white/10 rounded-xl p-6 flex justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-emerald-500" />
+      </div>
+    );
+  }
+
+  if (!displayData || displayData.length === 0) return null;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
@@ -129,7 +147,7 @@ export function AlphaCard({ data }: { data: AlphaPositionsData }) {
 
       {/* Rows */}
       <div className="divide-y divide-white/5">
-        {data.data.map((pos, i: number) => (
+        {displayData.map((pos: any, i: number) => (
           <div key={i} className="grid grid-cols-12 items-center p-3 md:p-4 hover:bg-white/[0.02] transition-colors group cursor-pointer">
             <div className="col-span-6 pr-2 min-w-0">
               <div className="text-xs md:text-sm font-medium text-zinc-200 group-hover:text-blue-400 transition-colors truncate">{pos.market}</div>
@@ -161,7 +179,21 @@ export function AlphaCard({ data }: { data: AlphaPositionsData }) {
 }
 
 // --- 2. FUNDS / VAULTS (Investment Product Style) ---
-export function FundsCard({ data }: { data: FundsData }) {
+export function FundsCard({ data }: { data: { params?: { risk_tolerance?: string } } | FundsData }) {
+  const params = 'params' in data ? data.params || {} : {};
+  const { data: funds, isLoading } = useAvailableFunds(params.risk_tolerance);
+  const displayData = 'data' in data ? data.data : funds;
+
+  if (isLoading && !displayData) {
+    return (
+      <div className="my-4 w-full max-w-md bg-[#0a0a0a] border border-white/10 rounded-xl p-6 flex justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+      </div>
+    );
+  }
+
+  if (!displayData || displayData.length === 0) return null;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
@@ -175,12 +207,12 @@ export function FundsCard({ data }: { data: FundsData }) {
           <span className="font-bold text-zinc-200 text-sm tracking-tight">Active Vaults</span>
         </div>
         <span className="text-[10px] text-zinc-500 font-mono">
-          {data.data.length} POOLS
+          {displayData.length} POOLS
         </span>
       </div>
 
       <div className="divide-y divide-white/5">
-        {data.data.map((fund: Fund) => (
+        {displayData.map((fund: Fund) => (
           <div key={fund.id} className="p-4 hover:bg-zinc-800/30 transition-all group cursor-pointer">
             <div className="flex justify-between items-start mb-1.5">
               <h4 className="text-sm font-bold text-white group-hover:text-purple-400 transition-colors">
@@ -264,10 +296,22 @@ export function TradeSuccessCard({ data }: { data: TradeResultData }) {
 }
 
 // --- 4. PNL CARD (Performance Metrics) ---
-export function PnLCard({ data }: { data: PnLData }) {
-  const isDailyPositive = data.daily.includes('+');
-  const isTotalPositive = !data.all_time.includes('-'); // Assuming negative has '-'
+export function PnLCard({ data }: { data: { params: {} } | PnLData }) {
+  const { data: pnl, isLoading } = usePnL();
+  const displayData = 'daily' in data ? data : pnl;
 
+  if (isLoading && !displayData) {
+    return (
+      <div className="my-4 w-full max-w-[280px] bg-[#0a0a0a] border border-white/10 rounded-xl p-6 flex justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-zinc-500" />
+      </div>
+    );
+  }
+
+  if (!displayData) return null;
+
+  const isDailyPositive = displayData.daily?.includes('+') ?? false;
+  const isTotalPositive = !(displayData.all_time?.includes('-') ?? true);
   return (
     <motion.div
       initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
@@ -293,7 +337,7 @@ export function PnLCard({ data }: { data: PnLData }) {
               ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
               : "bg-red-500/10 text-red-400 border-red-500/20"
           )}>
-            {data.daily}
+            {displayData.daily}
           </div>
         </div>
 
@@ -308,7 +352,7 @@ export function PnLCard({ data }: { data: PnLData }) {
           <div className={cn("font-mono font-bold text-sm",
             isTotalPositive ? "text-emerald-400" : "text-red-400"
           )}>
-            {data.all_time}
+            {displayData.all_time}
           </div>
         </div>
       </div>
@@ -316,6 +360,35 @@ export function PnLCard({ data }: { data: PnLData }) {
       {/* Footer */}
       <div className="px-4 py-2 bg-zinc-900/30 border-t border-white/5 text-[10px] text-zinc-500 text-center font-mono">
         REALIZED + UNREALIZED
+      </div>
+    </motion.div>
+  );
+}
+
+// --- 5. GENERIC TOOL WIDGET ---
+export function GenericToolWidget({ toolName, args, result }: { toolName: string, args: any, result: any }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+      className="my-4 w-full max-w-md bg-zinc-900/50 border border-white/10 rounded-xl p-4"
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <div className="p-1.5 bg-blue-500/10 rounded text-blue-400">
+          <Terminal className="w-4 h-4" />
+        </div>
+        <span className="text-sm font-bold text-zinc-200">{toolName}</span>
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-xs text-zinc-500 font-mono">Input:</div>
+        <pre className="bg-black/30 p-2 rounded text-[10px] text-zinc-400 overflow-x-auto">
+          {JSON.stringify(args, null, 2)}
+        </pre>
+
+        <div className="text-xs text-zinc-500 font-mono mt-2">Output:</div>
+        <pre className="bg-black/30 p-2 rounded text-[10px] text-emerald-400/80 overflow-x-auto">
+          {typeof result === 'string' ? result : JSON.stringify(result, null, 2)}
+        </pre>
       </div>
     </motion.div>
   );

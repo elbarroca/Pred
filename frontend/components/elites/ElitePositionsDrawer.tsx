@@ -2,13 +2,14 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
-import { X, ExternalLink, ArrowRight, Flame, Activity, History, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { X, ExternalLink, ArrowRight, Flame, Activity, History, ChevronLeft, ChevronRight, Loader2, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { EliteTrader } from '@/types/elite';
 import { fetchElitePositions } from '@/lib/api/elites';
 import { fetchWalletTrades } from '@/lib/api/wallets';
 import { cn } from '@/lib/utils';
+import { getWalletDisplayName, getWalletAvatar } from '@/lib/utils/wallet-display';
 
 interface DrawerProps {
     trader: EliteTrader | null;
@@ -53,6 +54,9 @@ export default function ElitePositionsDrawer({ trader, highlightCategory, onClos
         ? positions.filter(p => p.event_category?.toLowerCase().includes(highlightCategory.toLowerCase())).length
         : 0;
 
+    const displayName = getWalletDisplayName(trader);
+    const avatarUrl = getWalletAvatar(trader);
+
     return (
         <AnimatePresence>
             {trader && (
@@ -70,18 +74,39 @@ export default function ElitePositionsDrawer({ trader, highlightCategory, onClos
                         <div className="p-4 md:p-6 border-b border-white/10 bg-[#0c0c0c]">
                             <div className="flex justify-between items-start mb-4 gap-2">
                                 <div className="flex-1 min-w-0">
-                                    <div className="flex gap-2 mb-2 flex-wrap">
-                                        <div className="relative">
-                                            <div className="absolute inset-0 bg-amber-500/20 blur-sm rounded-lg" />
-                                            <span className="relative px-3 py-1 rounded-lg bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 text-xs font-black border border-amber-500/40 whitespace-nowrap shadow-lg">
-                                                🏆 Rank #{trader.rank_in_tier}
-                                            </span>
+                                    <div className="flex items-start gap-3 mb-4">
+                                        {/* Avatar */}
+                                        <div className="relative flex-shrink-0">
+                                            {avatarUrl ? (
+                                                <img
+                                                    src={avatarUrl}
+                                                    alt={displayName}
+                                                    className="w-12 h-12 md:w-14 md:h-14 rounded-xl object-cover bg-zinc-800 border border-white/10"
+                                                />
+                                            ) : (
+                                                <div className="w-12 h-12 md:w-14 md:h-14 rounded-xl bg-gradient-to-br from-zinc-800 to-zinc-900 border border-white/10 flex items-center justify-center">
+                                                    <User className="w-6 h-6 md:w-7 md:h-7 text-zinc-500" />
+                                                </div>
+                                            )}
                                         </div>
-                                        <span className="px-3 py-1 rounded-lg bg-gradient-to-r from-zinc-800 to-zinc-900 text-zinc-300 text-xs font-bold border border-white/10 whitespace-nowrap shadow-md">
-                                            Tier {trader.tier}
-                                        </span>
+
+                                        {/* Name & Badges */}
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex gap-2 mb-2 flex-wrap">
+                                                <div className="relative">
+                                                    <div className="absolute inset-0 bg-amber-500/20 blur-sm rounded-lg" />
+                                                    <span className="relative px-3 py-1 rounded-lg bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 text-xs font-black border border-amber-500/40 whitespace-nowrap shadow-lg">
+                                                        🏆 Rank #{trader.rank_in_tier}
+                                                    </span>
+                                                </div>
+                                                <span className="px-3 py-1 rounded-lg bg-gradient-to-r from-zinc-800 to-zinc-900 text-zinc-300 text-xs font-bold border border-white/10 whitespace-nowrap shadow-md">
+                                                    Tier {trader.tier}
+                                                </span>
+                                            </div>
+                                            <h2 className="text-sm md:text-lg font-bold text-white mb-1">{displayName}</h2>
+                                            <p className="text-xs font-mono text-zinc-500 break-all">{trader.proxy_wallet}</p>
+                                        </div>
                                     </div>
-                                    <h2 className="text-sm md:text-lg font-mono font-bold text-white break-words">{trader.proxy_wallet}</h2>
                                 </div>
                                 <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-colors flex-shrink-0">
                                     <X className="w-5 h-5 text-zinc-500 hover:text-white" />
