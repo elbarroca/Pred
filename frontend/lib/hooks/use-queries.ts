@@ -3,11 +3,12 @@ import { supabase } from '@/lib/supabase';
 import { fetchMarketStats, fetchMarkets } from '@/lib/api/markets';
 import { GlobalMarketStats, Market } from '@/types/market';
 import { Fund } from '@/types/chat';
+import { queryKeys } from '@/lib/api/queryKeys';
 
 // --- 1. ELITE POSITIONS ---
 export function useElitePositions(category?: string) {
     return useQuery({
-        queryKey: ['elite-positions', category],
+        queryKey: queryKeys.elite.positions(undefined, category),
         queryFn: async () => {
             const { data: elites } = await supabase.from('elite_traders').select('proxy_wallet').eq('tier', 'S').limit(5);
             const eliteIds = elites?.map(e => e.proxy_wallet) || [];
@@ -36,14 +37,15 @@ export function useElitePositions(category?: string) {
                 roi: ((p.unrealized_pnl || 0) / (p.size || 1) * 100).toFixed(1)
             }));
         },
-        staleTime: 1000 * 60 * 5, // 5 minutes
+        staleTime: 10 * 60 * 1000, // 10 minutes - aggressive caching
+        gcTime: 30 * 60 * 1000, // Keep in cache 30 minutes
     });
 }
 
 // --- 2. FUNDS ---
 export function useAvailableFunds(riskTolerance?: string) {
     return useQuery({
-        queryKey: ['available-funds', riskTolerance],
+        queryKey: queryKeys.funds.available(riskTolerance),
         queryFn: async () => {
             // In a real app, this would fetch from an API/DB
             const allFunds: Fund[] = [
@@ -57,16 +59,18 @@ export function useAvailableFunds(riskTolerance?: string) {
             }
             return allFunds;
         },
-        staleTime: 1000 * 60 * 60, // 1 hour (funds change rarely)
+        staleTime: Infinity, // Never goes stale - static config data
+        gcTime: Infinity, // Keep forever in cache
     });
 }
 
 // --- 3. MARKET STATS ---
 export function useMarketStats() {
     return useQuery({
-        queryKey: ['market-stats'],
+        queryKey: queryKeys.markets.stats(),
         queryFn: fetchMarketStats,
-        staleTime: 1000 * 60 * 10, // 10 minutes
+        staleTime: 15 * 60 * 1000, // 15 minutes - aggressive caching
+        gcTime: 60 * 60 * 1000, // Keep in cache 1 hour
     });
 }
 
@@ -82,7 +86,7 @@ export function useMarkets(filters: {
     minLiquidity?: number;
 }) {
     return useQuery({
-        queryKey: ['markets', filters],
+        queryKey: queryKeys.markets.list(filters),
         queryFn: () => fetchMarkets(
             filters.page,
             filters.search,
@@ -94,13 +98,15 @@ export function useMarkets(filters: {
             filters.minLiquidity
         ),
         placeholderData: (previousData) => previousData, // Keep previous data while fetching new page
+        staleTime: 10 * 60 * 1000, // 10 minutes - aggressive caching
+        gcTime: 30 * 60 * 1000, // Keep in cache 30 minutes
     });
 }
 
 // --- 5. PNL ---
 export function usePnL() {
     return useQuery({
-        queryKey: ['pnl'],
+        queryKey: queryKeys.pnl,
         queryFn: async () => {
             // Mock data for now
             return {
@@ -108,6 +114,7 @@ export function usePnL() {
                 all_time: "-4.2%",
             };
         },
-        staleTime: 1000 * 60 * 15, // 15 minutes
+        staleTime: 20 * 60 * 1000, // 20 minutes - aggressive caching
+        gcTime: 60 * 60 * 1000, // Keep in cache 1 hour
     });
 }

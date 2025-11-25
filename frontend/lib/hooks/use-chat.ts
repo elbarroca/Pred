@@ -30,7 +30,7 @@ export function useChat() {
     const client = new ChatClient({
       apiKey: apiKey,
       identifier: getSessionId(),
-      dynamicVariables: { app_context: "PolyAnalytics Dashboard" }
+      dynamicVariables: { app_context: "PolyTier Dashboard" }
     });
 
     clientRef.current = client;

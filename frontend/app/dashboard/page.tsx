@@ -3,15 +3,30 @@
 import { useEffect, useRef } from 'react';
 import { useChat } from '@/lib/hooks/use-chat';
 import { cn } from '@/lib/utils';
-import { User, Sparkles, Command, RotateCcw } from 'lucide-react';
+import { User, Sparkles, RotateCcw } from 'lucide-react';
+import Image from 'next/image';
 import Markdown from 'react-markdown';
 import ChatInput from '@/components/chat/ChatInput'; // Ensure this path is correct based on previous steps
 import { AlphaCard, FundsCard, TradeSuccessCard, PnLCard, ToolLog, ThoughtLog, GenericToolWidget } from '@/components/chat/ChatWidgets';
 import { ChatMessage, AlphaPositionsData, FundsData, TradeResultData, PnLData } from '@/types/chat';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '@/lib/api/queryKeys';
+import { fetchElitePositions } from '@/lib/api/elites';
+import { fetchMarketStats } from '@/lib/api/markets';
 
 export default function ChatPage() {
   const { messages, status, isTyping, sendMessage, resetSession } = useChat();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+
+  // Prefetch commonly requested data for instant loading
+  useEffect(() => {
+    // Prefetch market stats (frequently requested)
+    queryClient.prefetchQuery({
+      queryKey: queryKeys.markets.stats(),
+      queryFn: fetchMarketStats,
+    });
+  }, [queryClient]);
 
   // Auto-scroll with requestAnimationFrame to ensure DOM updates complete
   useEffect(() => {
@@ -33,7 +48,7 @@ export default function ChatPage() {
       {/* Inline Header for Status and Controls */}
       <header className="w-full flex items-center justify-between px-4 py-3 border-b border-white/5 bg-[#050505]/80 backdrop-blur-sm flex-shrink-0">
         <div className="md:hidden flex items-center gap-2 font-bold text-zinc-200 text-sm">
-          <Command className="w-4 h-4" /> PolyAnalytics
+          <Image src="/logo.png" alt="PolyTier" width={20} height={20} className="object-contain" /> PolyTier
         </div>
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -157,8 +172,8 @@ function EmptyState({ onSuggestionClick, status }: { onSuggestionClick: (text: s
     <div className="flex flex-col items-center justify-center h-full px-4">
       <div className="mb-8 relative group">
         <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full group-hover:bg-blue-500/30 transition-all" />
-        <div className="w-20 h-20 bg-[#0a0a0a] rounded-2xl border border-zinc-800 flex items-center justify-center relative z-10 shadow-2xl">
-          <Command className="w-10 h-10 text-white" />
+        <div className="w-20 h-20 bg-[#0a0a0a] rounded-2xl border border-zinc-800 flex items-center justify-center relative z-10 shadow-2xl overflow-hidden">
+          <Image src="/icon.png" alt="PolyTier" width={64} height={64} className="object-cover" />
         </div>
       </div>
 

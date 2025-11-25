@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { motion, useScroll, useMotionValueEvent } from 'framer-motion';
-import { Command } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 export default function Navbar() {
@@ -21,7 +21,7 @@ export default function Navbar() {
   });
 
   return (
-    <motion.nav 
+    <motion.nav
       variants={{
         visible: { y: 0 },
         hidden: { y: "-100%" },
@@ -32,11 +32,11 @@ export default function Navbar() {
     >
       <div className="max-w-7xl mx-auto px-4 md:px-6 h-14 md:h-16 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 md:w-8 md:h-8 bg-white rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.3)]">
-            <Command className="w-3.5 h-3.5 md:w-4 md:h-4 text-black" />
+          <div className="w-7 h-7 md:w-8 md:h-8 rounded-lg flex items-center justify-center overflow-hidden">
+            <Image src="/logo.png" alt="PolyTier" width={32} height={32} className="object-contain" />
           </div>
           <span className="font-bold tracking-tight text-base md:text-lg bg-clip-text text-transparent bg-gradient-to-r from-white to-zinc-500">
-            PolyAnalytics
+            PolyTier
           </span>
         </div>
         <div className="flex items-center gap-4 md:gap-6">
