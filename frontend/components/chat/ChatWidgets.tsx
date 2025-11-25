@@ -17,14 +17,14 @@ export function ThoughtLog({ thoughts }: { thoughts: string[] }) {
   if (!thoughts || thoughts.length === 0) return null;
 
   return (
-    <div className="my-3 mb-4 space-y-2 bg-blue-900/10 border border-blue-500/20 rounded-lg p-3">
+    <div className="my-2 mb-3 space-y-1.5 md:space-y-2 bg-blue-900/10 border border-blue-500/20 rounded-lg p-2 md:p-3">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex items-center gap-2 text-[10px] text-blue-400 uppercase tracking-wider font-semibold w-full hover:text-blue-300 transition-colors"
+        className="flex items-center gap-1.5 md:gap-2 text-[9px] md:text-[10px] text-blue-400 uppercase tracking-wider font-semibold w-full hover:text-blue-300 transition-colors"
       >
-        <Brain className="w-3 h-3" />
+        <Brain className="w-2.5 h-2.5 md:w-3 md:h-3" />
         Thinking Process
-        {isExpanded ? <ChevronUp className="w-3 h-3 ml-auto" /> : <ChevronDown className="w-3 h-3 ml-auto" />}
+        {isExpanded ? <ChevronUp className="w-2.5 h-2.5 md:w-3 md:h-3 ml-auto" /> : <ChevronDown className="w-2.5 h-2.5 md:w-3 md:h-3 ml-auto" />}
       </button>
 
       <AnimatePresence>
@@ -35,9 +35,9 @@ export function ThoughtLog({ thoughts }: { thoughts: string[] }) {
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
           >
-            <div className="pt-2 space-y-1.5">
+            <div className="pt-1.5 md:pt-2 space-y-1 md:space-y-1.5">
               {thoughts.map((thought, i) => (
-                <div key={i} className="flex gap-2 text-[11px] text-blue-300/80 font-mono leading-relaxed">
+                <div key={i} className="flex gap-1.5 md:gap-2 text-[10px] md:text-[11px] text-blue-300/80 font-mono leading-relaxed">
                   <span className="text-blue-500/50 select-none">{i + 1}.</span>
                   <span>{thought}</span>
                 </div>
@@ -55,9 +55,9 @@ export function ToolLog({ tools }: { tools: ToolInvocation[] }) {
   if (!tools || tools.length === 0) return null;
 
   return (
-    <div className="my-3 mb-4 space-y-2 bg-zinc-900/30 border border-white/5 rounded-lg p-3">
-      <div className="flex items-center gap-2 text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2">
-        <Terminal className="w-3 h-3" />
+    <div className="my-2 mb-3 space-y-1.5 md:space-y-2 bg-zinc-900/30 border border-white/5 rounded-lg p-2 md:p-3">
+      <div className="flex items-center gap-1.5 md:gap-2 text-[9px] md:text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-1.5 md:mb-2">
+        <Terminal className="w-2.5 h-2.5 md:w-3 md:h-3" />
         System Actions
       </div>
       {tools.map((tool, i) => (

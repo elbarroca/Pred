@@ -18,16 +18,21 @@ export default function ChatInterface() {
   // Auto-scroll logic
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+      // Use requestAnimationFrame to ensure DOM has updated
+      requestAnimationFrame(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+        }
+      });
     }
   }, [messages, isTyping]);
 
   return (
-    <div className="flex flex-col h-full w-full max-w-full bg-[#09090b]">
+    <div className="relative flex flex-col h-full w-full max-w-full bg-[#09090b]">
 
       {/* Chat Area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto pt-4 pb-32 px-2 md:px-0 scrollbar-thin">
-        <div className="max-w-3xl mx-auto w-full space-y-8">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto pt-4 pb-96 md:pb-44 px-3 md:px-0 scrollbar-thin">
+        <div className="max-w-3xl mx-auto w-full space-y-4 md:space-y-6">
           {messages.map((msg: ChatMessage) => {
 
             // 1. SYSTEM WIDGETS (Render Full Width)
@@ -52,24 +57,24 @@ export default function ChatInterface() {
             }
 
             return (
-              <div key={msg.id} className={cn("flex gap-3 md:gap-5 w-full px-4", msg.role === 'user' ? "flex-row-reverse" : "flex-row")}>
+              <div key={msg.id} className={cn("flex gap-2 md:gap-5 w-full px-2 md:px-4 py-1", msg.role === 'user' ? "flex-row-reverse" : "flex-row")}>
 
                 {/* Avatar */}
                 <div className={cn(
-                  "w-8 h-8 md:w-9 md:h-9 rounded-xl flex items-center justify-center flex-shrink-0 border shadow-sm",
+                  "w-7 h-7 md:w-9 md:h-9 rounded-xl flex items-center justify-center flex-shrink-0 border shadow-sm",
                   msg.role === 'user'
                     ? "bg-zinc-800 border-zinc-700"
                     : "bg-gradient-to-b from-blue-900 to-blue-950 border-blue-800/30"
                 )}>
                   {msg.role === 'user' ? (
-                    <User className="w-4 h-4 text-zinc-400" />
+                    <User className="w-3.5 h-3.5 md:w-4 md:h-4 text-zinc-400" />
                   ) : (
-                    <Image src="/favicon.svg" alt="AI" width={20} height={20} className="opacity-90 invert" />
+                    <Image src="/favicon.svg" alt="AI" width={16} height={16} className="opacity-90 invert md:w-[20px] md:h-[20px]" />
                   )}
                 </div>
 
                 {/* Content Column */}
-                <div className={cn("flex flex-col max-w-[85%] md:max-w-[75%]", msg.role === 'user' ? "items-end" : "items-start")}>
+                <div className={cn("flex flex-col max-w-[78%] md:max-w-[75%]", msg.role === 'user' ? "items-end" : "items-start")}>
 
                   {/* Thoughts / Reasoning Log */}
                   {msg.thoughts && msg.thoughts.length > 0 && (
@@ -84,7 +89,7 @@ export default function ChatInterface() {
                   {/* Text Bubble */}
                   {msg.content && (
                     <div className={cn(
-                      "px-4 py-3 rounded-2xl text-[15px] leading-relaxed shadow-sm",
+                      "px-3 py-2.5 md:px-4 md:py-3 rounded-2xl text-[14px] md:text-[15px] leading-relaxed shadow-sm",
                       msg.role === 'user'
                         ? "bg-white text-black rounded-tr-none"
                         : "bg-zinc-900 border border-white/5 text-zinc-200 rounded-tl-none"
@@ -99,13 +104,13 @@ export default function ChatInterface() {
 
           {/* Thinking / Typing Indicator */}
           {isTyping && (
-            <div className="flex gap-5 px-4 animate-in fade-in duration-300">
-              <div className="w-9 h-9 rounded-xl bg-zinc-900 border border-white/5 flex items-center justify-center">
-                <Image src="/favicon.svg" alt="AI" width={20} height={20} className="opacity-40 grayscale" />
+            <div className="flex gap-2 md:gap-5 px-2 md:px-4 py-1 animate-in fade-in duration-300">
+              <div className="w-7 h-7 md:w-9 md:h-9 rounded-xl bg-zinc-900 border border-white/5 flex items-center justify-center flex-shrink-0">
+                <Image src="/favicon.svg" alt="AI" width={16} height={16} className="opacity-40 grayscale md:w-[20px] md:h-[20px]" />
               </div>
-              <div className="flex flex-col gap-2 pt-1">
-                <div className="flex items-center gap-2 text-xs text-blue-400 font-medium uppercase tracking-wider animate-pulse">
-                  <Brain className="w-3 h-3" /> Reasoning...
+              <div className="flex flex-col gap-1.5 md:gap-2 pt-0.5 md:pt-1">
+                <div className="flex items-center gap-1.5 md:gap-2 text-[10px] md:text-xs text-blue-400 font-medium uppercase tracking-wider animate-pulse">
+                  <Brain className="w-2.5 h-2.5 md:w-3 md:h-3" /> Reasoning...
                 </div>
                 <div className="flex gap-1">
                   <div className="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce [animation-delay:-0.3s]" />
@@ -119,11 +124,11 @@ export default function ChatInterface() {
       </div>
 
       {/* Input Area */}
-      <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-[#09090b] via-[#09090b] to-transparent pt-12 pb-6 px-4 z-20">
+      <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-[#09090b] from-80% via-[#09090b]/95 to-transparent pt-32 md:pt-12 pb-4 md:pb-6 px-3 md:px-4 z-20">
         <div className="max-w-3xl mx-auto">
           <ChatInput onSend={sendMessage} disabled={status !== 'connected'} />
-          <div className="text-center mt-3">
-            <p className="text-[10px] text-zinc-600 font-mono tracking-widest uppercase">
+          <div className="text-center mt-2 md:mt-3">
+            <p className="text-[9px] md:text-[10px] text-zinc-600 font-mono tracking-widest uppercase">
               Powered by Convo AI & Polymarket Data
             </p>
           </div>

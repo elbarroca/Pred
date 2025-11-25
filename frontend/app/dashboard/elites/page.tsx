@@ -523,13 +523,7 @@ export default function EliteWalletsPage() {
 
                   <div className="flex justify-between items-start mb-3 relative z-10">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className={cn("w-10 h-10 flex items-center justify-center rounded-lg text-sm font-bold shrink-0",
-                        trader.rank_in_tier <= 3 ? "bg-gradient-to-br from-amber-400 to-amber-600 text-black shadow-lg shadow-amber-500/20" : "bg-zinc-800 text-zinc-500"
-                      )}>
-                        {trader.rank_in_tier}
-                      </div>
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        {getWalletAvatar(trader) ? (
+                      {getWalletAvatar(trader) ? (
                           <img
                             src={getWalletAvatar(trader)!}
                             alt={getWalletDisplayName(trader)}
@@ -546,7 +540,6 @@ export default function EliteWalletsPage() {
                             {trader.n_positions || 0} {(trader.n_positions || 0) === 1 ? 'Position' : 'Positions'}
                           </div>
                         </div>
-                      </div>
                     </div>
 
                     <div className="flex flex-col items-end gap-2 shrink-0">

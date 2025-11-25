@@ -13,12 +13,16 @@ export default function ChatPage() {
   const { messages, status, isTyping, sendMessage, resetSession } = useChat();
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll
+  // Auto-scroll with requestAnimationFrame to ensure DOM updates complete
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTo({
-        top: scrollRef.current.scrollHeight,
-        behavior: 'smooth'
+      requestAnimationFrame(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTo({
+            top: scrollRef.current.scrollHeight,
+            behavior: 'smooth'
+          });
+        }
       });
     }
   }, [messages, isTyping]);
@@ -26,9 +30,9 @@ export default function ChatPage() {
   return (
     <div className="flex flex-col h-full w-full relative">
 
-      {/* Floating Header for Mobile/Status */}
-      <header className="absolute top-0 left-0 w-full h-14 flex items-center justify-between px-6 z-10 bg-gradient-to-b from-[#050505] to-transparent">
-        <div className="md:hidden flex items-center gap-2 font-bold text-zinc-200">
+      {/* Inline Header for Status and Controls */}
+      <header className="w-full flex items-center justify-between px-4 py-3 border-b border-white/5 bg-[#050505]/80 backdrop-blur-sm flex-shrink-0">
+        <div className="md:hidden flex items-center gap-2 font-bold text-zinc-200 text-sm">
           <Command className="w-4 h-4" /> PolyAnalytics
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -46,7 +50,7 @@ export default function ChatPage() {
       </header>
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto pt-20 pb-32 scrollbar-thin scrollbar-thumb-zinc-800/50 hover:scrollbar-thumb-zinc-700">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto pt-0 pb-48 md:pb-44 scrollbar-thin scrollbar-thumb-zinc-800/50 hover:scrollbar-thumb-zinc-700">
         {messages.length === 0 ? (
           <EmptyState onSuggestionClick={sendMessage} status={status} />
         ) : (
@@ -129,7 +133,7 @@ export default function ChatPage() {
       </div>
 
       {/* Input Area */}
-      <div className="absolute bottom-0 left-0 w-full bg-[#050505] pt-4 pb-6 px-4 z-20 border-t border-white/5">
+      <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-[#050505] from-80% via-[#050505]/95 to-transparent pt-8 pb-6 px-4 z-20 border-t border-white/5">
         <div className="max-w-3xl mx-auto">
           <ChatInput onSend={sendMessage} disabled={status !== 'connected'} />
           <div className="text-center mt-3 flex items-center justify-center gap-2">

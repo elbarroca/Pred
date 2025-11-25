@@ -4,7 +4,7 @@ import MobileSidebar from '@/components/layout/MobileSidebar';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-screen bg-[#050505] text-white overflow-hidden font-sans">
+    <div className="flex h-[100dvh] lg:h-screen bg-[#050505] text-white overflow-hidden font-sans">
       <AppSidebar />
       <MobileSidebar /> {/* Added this */}
 
