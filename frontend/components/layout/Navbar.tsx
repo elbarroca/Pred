@@ -41,7 +41,7 @@ export default function Navbar() {
         </div>
         <div className="flex items-center gap-4 md:gap-6">
           <Link href="/dashboard">
-            <Button variant="default" className="rounded-full px-4 md:px-6 h-8 md:h-9 text-xs md:text-sm">
+            <Button className="rounded-full px-4 md:px-6 h-8 md:h-9 text-xs md:text-sm bg-white text-black hover:bg-zinc-200 border-0 font-medium shadow-sm">
               Launch App
             </Button>
           </Link>

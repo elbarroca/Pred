@@ -1,13 +1,14 @@
 'use client';
 
-import { useState } from 'react';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { X, ExternalLink, ArrowRight, Activity, Loader2, ChevronLeft, ChevronRight, User } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import { X, ExternalLink, ArrowRight, Activity, Loader2, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { WalletAnalytics } from '@/types/database';
 import { fetchWalletTrades } from '@/lib/api/wallets';
 import { cn } from '@/lib/utils';
-import { getWalletDisplayName, getWalletAvatar, formatWalletAddress } from '@/lib/utils/wallet-display';
+import { getWalletDisplayName, getWalletAvatar } from '@/lib/utils/wallet-display';
 
 interface WalletDrawerProps {
   wallet: WalletAnalytics | null;
@@ -15,19 +16,45 @@ interface WalletDrawerProps {
 }
 
 export default function WalletDrawer({ wallet, onClose }: WalletDrawerProps) {
-  const [page, setPage] = useState(1);
   const [openingLink, setOpeningLink] = useState<string | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const { data: tradesData, isLoading } = useQuery({
-    queryKey: ['walletTrades', wallet?.proxy_wallet, page],
-    queryFn: () => fetchWalletTrades(wallet!.proxy_wallet, page, 50),
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading,
+  } = useInfiniteQuery({
+    queryKey: ['walletTrades', wallet?.proxy_wallet],
+    queryFn: ({ pageParam = 1 }) => fetchWalletTrades(wallet!.proxy_wallet, pageParam as number, 20),
+    getNextPageParam: (lastPage, allPages) => {
+      const currentPage = allPages.length;
+      return currentPage < lastPage.totalPages ? currentPage + 1 : undefined;
+    },
     enabled: !!wallet,
-    placeholderData: keepPreviousData,
+    initialPageParam: 1,
   });
 
-  const trades = tradesData?.data || [];
-  const totalCount = tradesData?.total || 0;
-  const totalPages = tradesData?.totalPages || 0;
+  const trades = data?.pages.flatMap(page => page.data) || [];
+  const totalCount = data?.pages[0]?.total || 0;
+
+  // Infinite scroll handler
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer || !hasNextPage || isFetchingNextPage) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+      // Load more when within 200px of bottom
+      if (scrollHeight - scrollTop - clientHeight < 200) {
+        fetchNextPage();
+      }
+    };
+
+    scrollContainer.addEventListener('scroll', handleScroll);
+    return () => scrollContainer.removeEventListener('scroll', handleScroll);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   // Formatters
   const currency = (n: number | null) =>
@@ -50,14 +77,14 @@ export default function WalletDrawer({ wallet, onClose }: WalletDrawerProps) {
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9998]"
           />
 
           {/* Drawer Panel */}
           <motion.div
             initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-            className="fixed right-0 top-0 h-full w-full md:w-[700px] bg-[#09090b] border-l border-white/10 z-50 shadow-2xl flex flex-col font-sans"
+            className="fixed right-0 top-0 h-full w-full md:w-[700px] bg-[#09090b] border-l border-white/10 z-[10000] shadow-2xl flex flex-col font-sans overflow-hidden"
           >
             {/* 1. Header Section */}
             <div className="p-4 md:p-8 pb-4 md:pb-6 border-b border-white/10 bg-[#0c0c0c]">
@@ -68,9 +95,11 @@ export default function WalletDrawer({ wallet, onClose }: WalletDrawerProps) {
                     {/* Avatar */}
                     <div className="relative flex-shrink-0">
                       {avatarUrl ? (
-                        <img
+                        <Image
                           src={avatarUrl}
                           alt={displayName}
+                          width={64}
+                          height={64}
                           className="w-12 h-12 md:w-16 md:h-16 rounded-xl object-cover bg-zinc-800 border border-white/10"
                         />
                       ) : (
@@ -133,35 +162,21 @@ export default function WalletDrawer({ wallet, onClose }: WalletDrawerProps) {
             </div>
 
             {/* 2. Trade History List */}
-            <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 bg-[#050505]">
-              <div className="flex items-center justify-between mb-4 md:mb-6 gap-2">
-                <h3 className="text-xs md:text-sm font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
-                  <Activity className="w-4 h-4" /> Position History
-                </h3>
-                <div className="flex items-center gap-3">
+            <div className="flex-1 flex flex-col bg-[#050505] overflow-hidden">
+              {/* Sticky Header with Pagination */}
+              <div className="sticky top-0 z-10 bg-[#050505] border-b border-white/5 px-4 md:px-6 lg:px-8 py-2 md:py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-xs md:text-sm font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                    <Activity className="w-4 h-4" /> Position History
+                  </h3>
                   <span className="text-xs text-zinc-600 whitespace-nowrap">
                     {totalCount} records
                   </span>
-                  {/* Pagination Controls */}
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1 || isLoading}
-                      className="p-1.5 border border-white/10 rounded-lg hover:bg-zinc-900 disabled:opacity-30 transition-colors"
-                    >
-                      <ChevronLeft className="w-3 h-3 text-zinc-400" />
-                    </button>
-                    <span className="text-xs text-zinc-500 font-mono flex items-center px-1">
-                      {page}/{totalPages || 1}
-                    </span>
-                    <button
-                      onClick={() => setPage(p => p + 1)} disabled={page >= totalPages || isLoading}
-                      className="p-1.5 border border-white/10 rounded-lg hover:bg-zinc-900 disabled:opacity-30 transition-colors"
-                    >
-                      <ChevronRight className="w-3 h-3 text-zinc-400" />
-                    </button>
-                  </div>
                 </div>
               </div>
+
+              {/* Scrollable Content */}
+              <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 pt-0 min-h-0">
 
               {isLoading ? (
                 <div className="space-y-4">
@@ -174,19 +189,37 @@ export default function WalletDrawer({ wallet, onClose }: WalletDrawerProps) {
                   {trades.map((trade) => {
                     const invested = trade.total_bought || 0;
                     const pnl = trade.realized_pnl || 0;
-                    const isProfit = pnl >= 0;
-
-                    // Determine Trade Status for Context
                     const entry = trade.avg_price || 0;
                     const exit = trade.cur_price || 0;
 
+                    // Determine Trade Status for Context
                     let statusLabel = "Closed";
                     let statusColor = "text-zinc-500";
+                    let isProfit = pnl >= 0;
+                    let displayPnl = pnl;
 
-                    if (exit >= 0.99) { statusLabel = "WON"; statusColor = "text-emerald-400"; }
-                    else if (exit <= 0.01) { statusLabel = "LOST"; statusColor = "text-red-400"; }
-                    else if (isProfit) { statusLabel = "SOLD PROFIT"; statusColor = "text-emerald-400"; }
-                    else { statusLabel = "SOLD LOSS"; statusColor = "text-red-400"; }
+                    if (exit >= 0.99) { 
+                      statusLabel = "WON"; 
+                      statusColor = "text-emerald-400";
+                      isProfit = true;
+                    }
+                    else if (exit <= 0.01) { 
+                      statusLabel = "LOST"; 
+                      statusColor = "text-red-400";
+                      isProfit = false;
+                      // Force negative display for LOST trades
+                      displayPnl = Math.abs(pnl) * -1;
+                    }
+                    else if (pnl >= 0) { 
+                      statusLabel = "SOLD PROFIT"; 
+                      statusColor = "text-emerald-400";
+                      isProfit = true;
+                    }
+                    else { 
+                      statusLabel = "SOLD LOSS"; 
+                      statusColor = "text-red-400";
+                      isProfit = false;
+                    }
 
                     return (
                       <div key={trade.id} className="group relative p-3 md:p-5 rounded-xl border border-white/5 bg-zinc-900/20 hover:bg-zinc-900/40 transition-all hover:border-white/10">
@@ -209,7 +242,7 @@ export default function WalletDrawer({ wallet, onClose }: WalletDrawerProps) {
 
                           <div className="text-right flex-shrink-0">
                             <div className={cn("text-base md:text-lg font-mono font-bold whitespace-nowrap", isProfit ? "text-emerald-400" : "text-red-400")}>
-                              {isProfit ? '+' : ''}{currency(pnl)}
+                              {isProfit ? '+' : ''}{currency(displayPnl)}
                             </div>
                             <div className={cn("text-[10px] font-bold uppercase tracking-wider", statusColor)}>
                               {statusLabel}
@@ -288,6 +321,21 @@ export default function WalletDrawer({ wallet, onClose }: WalletDrawerProps) {
                   })}
                 </div>
               )}
+
+              {/* Loading indicator for infinite scroll */}
+              {isFetchingNextPage && (
+                <div className="flex justify-center items-center py-6">
+                  <Loader2 className="w-5 h-5 text-zinc-500 animate-spin" />
+                </div>
+              )}
+
+              {/* End of list indicator */}
+              {!hasNextPage && trades.length > 0 && (
+                <div className="text-center py-6 text-xs text-zinc-600">
+                  End of list
+                </div>
+              )}
+              </div>
             </div>
           </motion.div>
         </>

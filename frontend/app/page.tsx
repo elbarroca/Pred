@@ -45,9 +45,24 @@ export default function LandingPage() {
 
                <div className="pt-4">
                   <Link href="/dashboard">
-                     <Button size="lg" className="h-14 px-10 text-lg rounded-full shadow-[0_0_40px_-10px_rgba(255,255,255,0.3)]">
-                        Start Analyzing <ArrowRight className="ml-2 w-5 h-5" />
-                     </Button>
+                     <motion.div
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                     >
+                        <Button
+                           size="lg"
+                           className="group relative h-14 px-10 text-lg rounded-full bg-gradient-to-r from-white via-blue-50 to-cyan-50 text-black hover:from-blue-50 hover:via-cyan-50 hover:to-blue-100 border-0 font-semibold shadow-[0_0_40px_-10px_rgba(255,255,255,0.4)] hover:shadow-[0_0_60px_-15px_rgba(59,130,246,0.5)] transition-all duration-500 overflow-hidden"
+                        >
+                           <span className="relative z-10 flex items-center gap-2">
+                              <span className="bg-gradient-to-r from-blue-600 to-cyan-600 bg-clip-text text-transparent font-bold">
+                                 Start Analyzing
+                              </span>
+                              <ArrowRight className="w-5 h-5 text-blue-600 group-hover:translate-x-1 transition-transform duration-300" />
+                           </span>
+                           <div className="absolute inset-0 bg-gradient-to-r from-blue-400/20 via-cyan-400/20 to-blue-400/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-full" />
+                        </Button>
+                     </motion.div>
                   </Link>
                </div>
             </motion.div>
@@ -208,9 +223,24 @@ export default function LandingPage() {
                   The market moves fast. Our AI moves faster.
                </p>
                <Link href="/dashboard">
-                  <Button size="lg" className="h-12 md:h-14 lg:h-16 px-8 md:px-10 lg:px-12 text-base md:text-lg lg:text-xl rounded-full shadow-[0_0_50px_-10px_rgba(255,255,255,0.2)]">
-                     Launch Terminal <ArrowRight className="ml-2 md:ml-3 w-5 h-5 md:w-6 md:h-6" />
-                  </Button>
+                  <motion.div
+                     whileHover={{ scale: 1.02 }}
+                     whileTap={{ scale: 0.98 }}
+                     transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                  >
+                     <Button
+                        size="lg"
+                        className="group relative h-12 md:h-14 lg:h-16 px-8 md:px-10 lg:px-12 text-base md:text-lg lg:text-xl rounded-full bg-gradient-to-r from-blue-600 via-cyan-600 to-emerald-600 hover:from-blue-700 hover:via-cyan-700 hover:to-emerald-700 text-white border-0 font-bold shadow-[0_0_50px_-10px_rgba(59,130,246,0.5)] hover:shadow-[0_0_70px_-15px_rgba(59,130,246,0.7)] transition-all duration-500 overflow-hidden"
+                     >
+                        <span className="relative z-10 flex items-center gap-2 md:gap-3">
+                           <span className="text-white font-bold drop-shadow-sm">
+                              Launch Terminal
+                           </span>
+                           <ArrowRight className="w-5 h-5 md:w-6 md:h-6 text-white group-hover:translate-x-1 transition-transform duration-300" />
+                        </span>
+                        <div className="absolute inset-0 bg-gradient-to-r from-blue-400/30 via-cyan-400/30 to-emerald-400/30 opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-full" />
+                     </Button>
+                  </motion.div>
                </Link>
             </div>
          </section>

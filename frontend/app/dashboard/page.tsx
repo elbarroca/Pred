@@ -11,7 +11,6 @@ import { AlphaCard, FundsCard, TradeSuccessCard, PnLCard, ToolLog, ThoughtLog, G
 import { ChatMessage, AlphaPositionsData, FundsData, TradeResultData, PnLData } from '@/types/chat';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/api/queryKeys';
-import { fetchElitePositions } from '@/lib/api/elites';
 import { fetchMarketStats } from '@/lib/api/markets';
 
 export default function ChatPage() {

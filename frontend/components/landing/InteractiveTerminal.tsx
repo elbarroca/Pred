@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, User, CheckCircle2, ChevronLeft, Copy, Wallet } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface Position {
   id: number;
@@ -59,24 +60,39 @@ export default function InteractiveTerminal() {
   const [selectedWallet, setSelectedWallet] = useState<Wallet | null>(null);
   const [selectedPos, setSelectedPos] = useState<Position | null>(null);
   const [simAmount] = useState(1000); // Simulation amount
+  const [isHovered, setIsHovered] = useState(false);
+  const [isClicked, setIsClicked] = useState(false);
 
   const handleWalletClick = (wallet: Wallet) => {
+    setIsClicked(true);
     setSelectedWallet(wallet);
     setStep(2);
+    // Reset clicked state after animation
+    setTimeout(() => setIsClicked(false), 500);
   };
 
   const handleCopyTrade = () => {
+    setIsClicked(true);
     setStep(4);
     setTimeout(() => {
         setStep(0);
         setSelectedWallet(null);
         setSelectedPos(null);
+        setIsClicked(false);
     }, 3000);
   };
 
   return (
-    <div className="relative w-full max-w-4xl mx-auto aspect-[3/4] sm:aspect-[4/3] md:aspect-[16/9] lg:aspect-[16/10] bg-[#050505] rounded-xl border border-white/10 shadow-2xl shadow-blue-900/20 overflow-hidden flex flex-col font-sans select-none group cursor-default">
-      
+    <div
+      className={cn(
+        "relative w-full max-w-4xl mx-auto aspect-[3/4] sm:aspect-[4/3] md:aspect-[16/9] lg:aspect-[16/10] bg-[#050505] rounded-xl border border-white/10 shadow-2xl shadow-blue-900/20 overflow-hidden flex flex-col font-sans select-none group cursor-default transition-all duration-300",
+        !isHovered && !isClicked && "animate-pulse-glow"
+      )}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onClick={() => setIsClicked(true)}
+    >
+
       {/* Header */}
       <div className="h-10 border-b border-white/5 bg-[#0a0a0a] flex items-center px-3 md:px-4 gap-2 md:gap-3 z-20">
         <div className="flex gap-1 md:gap-1.5">
@@ -98,13 +114,13 @@ export default function InteractiveTerminal() {
         <motion.div
             className={`absolute inset-0 flex flex-col items-center justify-center transition-all duration-500 px-4 ${step === 0 ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none -z-10'}`}
         >
-             <div onClick={() => setStep(1)} className="relative group/input cursor-pointer w-full max-w-md mx-auto">
-                <div className="absolute left-3 md:left-4 top-3 md:top-3.5 text-zinc-500 group-hover/input:text-emerald-400 transition-colors z-10">
+             <div onClick={() => { setIsClicked(true); setStep(1); }} className="relative group/input cursor-pointer w-full max-w-md mx-auto">
+                <div className="absolute left-3 md:left-4 top-3 md:top-3.5 text-zinc-500 group-hover/input:text-blue-400 transition-colors z-10">
                     <Search className="w-4 h-4" />
                 </div>
                 <input
                     readOnly
-                    className="w-full bg-[#0f0f0f] border border-white/10 rounded-xl py-3 pl-9 md:pl-10 pr-4 text-zinc-300 shadow-2xl text-sm transition-all group-hover/input:border-emerald-500/50 group-hover/input:bg-[#0a0a0a] group-hover/input:shadow-[0_0_20px_rgba(16,185,129,0.15)] group-hover/input:ring-1 group-hover/input:ring-emerald-500/20"
+                    className="w-full bg-[#0f0f0f] border border-white/10 rounded-xl py-3 pl-9 md:pl-10 pr-4 text-zinc-300 shadow-2xl text-sm transition-all group-hover/input:border-blue-500/50 group-hover/input:bg-[#0a0a0a] group-hover/input:shadow-[0_0_20px_rgba(59,130,246,0.15)] group-hover/input:ring-1 group-hover/input:ring-blue-500/20"
                     placeholder="Find whales, markets, or signals..."
                 />
                 <div className="mt-3 md:mt-4 flex flex-wrap justify-center gap-2">

@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
-import { X, ExternalLink, ArrowRight, Flame, Activity, History, ChevronLeft, ChevronRight, Loader2, User } from 'lucide-react';
+import { X, ExternalLink, ArrowRight, Flame, History, Loader2, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { EliteTrader } from '@/types/elite';
 import { fetchElitePositions } from '@/lib/api/elites';
 import { fetchWalletTrades } from '@/lib/api/wallets';
@@ -21,33 +21,78 @@ type Tab = 'open' | 'history';
 
 export default function ElitePositionsDrawer({ trader, highlightCategory, onClose }: DrawerProps) {
     const [activeTab, setActiveTab] = useState<Tab>('open');
-    const [historyPage, setHistoryPage] = useState(1);
     const [openingLink, setOpeningLink] = useState<string | null>(null);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-    // Query 1: Open Positions
-    const { data: positions = [], isLoading: loadingOpen } = useQuery({
+    // Query 1: Open Positions (Infinite)
+    const {
+        data: positionsData,
+        fetchNextPage: fetchNextOpenPage,
+        hasNextPage: hasNextOpenPage,
+        isFetchingNextPage: isFetchingNextOpenPage,
+        isLoading: loadingOpen,
+    } = useInfiniteQuery({
         queryKey: ['eliteOpenPositions', trader?.proxy_wallet],
-        queryFn: () => fetchElitePositions(trader!.proxy_wallet),
+        queryFn: ({ pageParam = 1 }) => fetchElitePositions(trader!.proxy_wallet, pageParam as number, 20),
+        getNextPageParam: (lastPage, allPages) => {
+            const currentPage = allPages.length;
+            return currentPage < lastPage.totalPages ? currentPage + 1 : undefined;
+        },
         enabled: !!trader && activeTab === 'open',
+        initialPageParam: 1,
     });
 
-    // Query 2: Trade History
-    const { data: historyData, isLoading: loadingHistory } = useQuery({
-        queryKey: ['eliteTradeHistory', trader?.proxy_wallet, historyPage],
-        queryFn: () => fetchWalletTrades(trader!.proxy_wallet, historyPage, 50),
+    const positions = positionsData?.pages.flatMap(page => page.data) || [];
+    const openTotal = positionsData?.pages[0]?.total || 0;
+
+    // Query 2: Trade History (Infinite)
+    const {
+        data: historyData,
+        fetchNextPage: fetchNextHistoryPage,
+        hasNextPage: hasNextHistoryPage,
+        isFetchingNextPage: isFetchingNextHistoryPage,
+        isLoading: loadingHistory,
+    } = useInfiniteQuery({
+        queryKey: ['eliteTradeHistory', trader?.proxy_wallet],
+        queryFn: ({ pageParam = 1 }) => fetchWalletTrades(trader!.proxy_wallet, pageParam as number, 20),
+        getNextPageParam: (lastPage, allPages) => {
+            const currentPage = allPages.length;
+            return currentPage < lastPage.totalPages ? currentPage + 1 : undefined;
+        },
         enabled: !!trader && activeTab === 'history',
-        placeholderData: keepPreviousData,
+        initialPageParam: 1,
     });
 
-    const historyTrades = historyData?.data || [];
-    const historyTotal = historyData?.total || 0;
-    const historyTotalPages = historyData?.totalPages || 0;
+    const historyTrades = historyData?.pages.flatMap(page => page.data) || [];
+    const historyTotal = historyData?.pages[0]?.total || 0;
+
+    // Infinite scroll handler
+    useEffect(() => {
+        const scrollContainer = scrollContainerRef.current;
+        if (!scrollContainer) return;
+
+        const hasNext = activeTab === 'open' ? hasNextOpenPage : hasNextHistoryPage;
+        const isFetching = activeTab === 'open' ? isFetchingNextOpenPage : isFetchingNextHistoryPage;
+        const fetchNext = activeTab === 'open' ? fetchNextOpenPage : fetchNextHistoryPage;
+
+        if (!hasNext || isFetching) return;
+
+        const handleScroll = () => {
+            const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+            // Load more when within 200px of bottom
+            if (scrollHeight - scrollTop - clientHeight < 200) {
+                fetchNext();
+            }
+        };
+
+        scrollContainer.addEventListener('scroll', handleScroll);
+        return () => scrollContainer.removeEventListener('scroll', handleScroll);
+    }, [activeTab, hasNextOpenPage, hasNextHistoryPage, isFetchingNextOpenPage, isFetchingNextHistoryPage, fetchNextOpenPage, fetchNextHistoryPage]);
 
     const currency = (n: number | null) =>
         new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0);
 
     const cents = (n: number | null) => (n || 0).toFixed(2);
-    const percent = (n: number | null) => `${(n || 0).toFixed(2)}%`;
 
     // Count positions in the highlighted category
     const relevantCount = highlightCategory
@@ -64,11 +109,11 @@ export default function ElitePositionsDrawer({ trader, highlightCategory, onClos
                     <motion.div
                         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                         onClick={onClose}
-                        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
+                        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9998]"
                     />
                     <motion.div
                         initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-                        className="fixed right-0 top-0 h-full w-full md:w-[700px] bg-[#09090b] border-l border-white/10 z-50 shadow-2xl flex flex-col"
+                        className="fixed right-0 top-0 h-full w-full md:w-[700px] bg-[#09090b] border-l border-white/10 z-[10000] shadow-2xl flex flex-col overflow-hidden"
                     >
                         {/* Header */}
                         <div className="p-4 md:p-6 border-b border-white/10 bg-[#0c0c0c]">
@@ -78,9 +123,11 @@ export default function ElitePositionsDrawer({ trader, highlightCategory, onClos
                                         {/* Avatar */}
                                         <div className="relative flex-shrink-0">
                                             {avatarUrl ? (
-                                                <img
+                                                <Image
                                                     src={avatarUrl}
                                                     alt={displayName}
+                                                    width={56}
+                                                    height={56}
                                                     className="w-12 h-12 md:w-14 md:h-14 rounded-xl object-cover bg-zinc-800 border border-white/10"
                                                 />
                                             ) : (
@@ -160,7 +207,7 @@ export default function ElitePositionsDrawer({ trader, highlightCategory, onClos
                                         activeTab === 'open' ? "text-white" : "text-zinc-500 hover:text-zinc-300"
                                     )}
                                 >
-                                    Open Positions ({loadingOpen ? '...' : positions.length})
+                                    Open Positions ({loadingOpen ? '...' : openTotal})
                                     {activeTab === 'open' && <motion.div layoutId="activeTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500" />}
                                 </button>
                                 <button
@@ -177,21 +224,27 @@ export default function ElitePositionsDrawer({ trader, highlightCategory, onClos
                         </div>
 
                         {/* Content Section */}
-                        <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-[#050505]">
+                        <div className="flex-1 flex flex-col bg-[#050505] overflow-hidden max-h-full">
                             {activeTab === 'open' ? (
                                 <>
-                                    <div className="flex items-center justify-between mb-4 md:mb-6 gap-2">
-                                        <h3 className="text-xs md:text-sm font-bold text-white flex items-center gap-2 uppercase tracking-wider">
-                                            <span className="relative flex h-2.5 w-2.5">
-                                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                                    {/* Sticky Header with Pagination */}
+                                    <div className="sticky top-0 z-10 bg-[#050505] border-b border-white/5 px-4 md:px-6 py-2 md:py-3">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <h3 className="text-xs md:text-sm font-bold text-white flex items-center gap-2 uppercase tracking-wider">
+                                                <span className="relative flex h-2.5 w-2.5">
+                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                                                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500"></span>
+                                                </span>
+                                                Live Open Positions
+                                            </h3>
+                                            <span className="text-xs text-zinc-600 whitespace-nowrap">
+                                                {openTotal} records
                                             </span>
-                                            Live Open Positions
-                                        </h3>
-                                        <span className="text-xs text-zinc-500 bg-zinc-900 px-2 py-1 rounded border border-white/5 whitespace-nowrap">
-                                            {positions.length} Active
-                                        </span>
+                                        </div>
                                     </div>
+
+                                    {/* Scrollable Content */}
+                                    <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 md:p-6 pt-0 min-h-0">
 
                                     {loadingOpen ? (
                                         <div className="space-y-3">{[1, 2, 3].map(i => <div key={i} className="h-24 bg-zinc-900 rounded-xl animate-pulse" />)}</div>
@@ -270,38 +323,38 @@ export default function ElitePositionsDrawer({ trader, highlightCategory, onClos
                                             })}
                                         </div>
                                     )}
+
+                                    {/* Loading indicator for infinite scroll */}
+                                    {isFetchingNextOpenPage && (
+                                        <div className="flex justify-center items-center py-6">
+                                            <Loader2 className="w-5 h-5 text-zinc-500 animate-spin" />
+                                        </div>
+                                    )}
+
+                                    {/* End of list indicator */}
+                                    {!hasNextOpenPage && positions.length > 0 && (
+                                        <div className="text-center py-6 text-xs text-zinc-600">
+                                            End of list
+                                        </div>
+                                    )}
+                                    </div>
                                 </>
                             ) : (
                                 <>
-                                    {/* HISTORY TAB */}
-                                    <div className="flex items-center justify-between mb-4 md:mb-6 gap-2">
-                                        <h3 className="text-xs md:text-sm font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
-                                            <History className="w-4 h-4" /> Trade History
-                                        </h3>
-                                        <div className="flex items-center gap-3">
+                                    {/* Sticky Header with Pagination */}
+                                    <div className="sticky top-0 z-10 bg-[#050505] border-b border-white/5 px-4 md:px-6 py-2 md:py-3">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <h3 className="text-xs md:text-sm font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                                                <History className="w-4 h-4" /> Trade History
+                                            </h3>
                                             <span className="text-xs text-zinc-600 whitespace-nowrap">
                                                 {historyTotal} records
                                             </span>
-                                            {/* Pagination Controls */}
-                                            <div className="flex gap-1">
-                                                <button
-                                                    onClick={() => setHistoryPage(p => Math.max(1, p - 1))} disabled={historyPage === 1 || loadingHistory}
-                                                    className="p-1.5 border border-white/10 rounded-lg hover:bg-zinc-900 disabled:opacity-30 transition-colors"
-                                                >
-                                                    <ChevronLeft className="w-3 h-3 text-zinc-400" />
-                                                </button>
-                                                <span className="text-xs text-zinc-500 font-mono flex items-center px-1">
-                                                    {historyPage}/{historyTotalPages || 1}
-                                                </span>
-                                                <button
-                                                    onClick={() => setHistoryPage(p => p + 1)} disabled={historyPage >= historyTotalPages || loadingHistory}
-                                                    className="p-1.5 border border-white/10 rounded-lg hover:bg-zinc-900 disabled:opacity-30 transition-colors"
-                                                >
-                                                    <ChevronRight className="w-3 h-3 text-zinc-400" />
-                                                </button>
-                                            </div>
                                         </div>
                                     </div>
+
+                                    {/* Scrollable Content */}
+                                    <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 md:p-6 pt-0 min-h-0">
 
                                     {loadingHistory ? (
                                         <div className="space-y-4">
@@ -314,17 +367,37 @@ export default function ElitePositionsDrawer({ trader, highlightCategory, onClos
                                             {historyTrades.map((trade) => {
                                                 const invested = trade.total_bought || 0;
                                                 const pnl = trade.realized_pnl || 0;
-                                                const isProfit = pnl >= 0;
                                                 const entry = trade.avg_price || 0;
                                                 const exit = trade.cur_price || 0;
 
+                                                // Determine Trade Status for Context
                                                 let statusLabel = "Closed";
                                                 let statusColor = "text-zinc-500";
+                                                let isProfit = pnl >= 0;
+                                                let displayPnl = pnl;
 
-                                                if (exit >= 0.99) { statusLabel = "WON"; statusColor = "text-emerald-400"; }
-                                                else if (exit <= 0.01) { statusLabel = "LOST"; statusColor = "text-red-400"; }
-                                                else if (isProfit) { statusLabel = "SOLD PROFIT"; statusColor = "text-emerald-400"; }
-                                                else { statusLabel = "SOLD LOSS"; statusColor = "text-red-400"; }
+                                                if (exit >= 0.99) { 
+                                                  statusLabel = "WON"; 
+                                                  statusColor = "text-emerald-400";
+                                                  isProfit = true;
+                                                }
+                                                else if (exit <= 0.01) { 
+                                                  statusLabel = "LOST"; 
+                                                  statusColor = "text-red-400";
+                                                  isProfit = false;
+                                                  // Force negative display for LOST trades
+                                                  displayPnl = Math.abs(pnl) * -1;
+                                                }
+                                                else if (pnl >= 0) { 
+                                                  statusLabel = "SOLD PROFIT"; 
+                                                  statusColor = "text-emerald-400";
+                                                  isProfit = true;
+                                                }
+                                                else { 
+                                                  statusLabel = "SOLD LOSS"; 
+                                                  statusColor = "text-red-400";
+                                                  isProfit = false;
+                                                }
 
                                                 return (
                                                     <div key={trade.id} className="group relative p-3 md:p-5 rounded-xl border border-white/5 bg-zinc-900/20 hover:bg-zinc-900/40 transition-all hover:border-white/10">
@@ -342,7 +415,7 @@ export default function ElitePositionsDrawer({ trader, highlightCategory, onClos
                                                             </div>
                                                             <div className="text-right flex-shrink-0">
                                                                 <div className={cn("text-base md:text-lg font-mono font-bold whitespace-nowrap", isProfit ? "text-emerald-400" : "text-red-400")}>
-                                                                    {isProfit ? '+' : ''}{currency(pnl)}
+                                                                    {isProfit ? '+' : ''}{currency(displayPnl)}
                                                                 </div>
                                                                 <div className={cn("text-[10px] font-bold uppercase tracking-wider", statusColor)}>
                                                                     {statusLabel}
@@ -402,6 +475,21 @@ export default function ElitePositionsDrawer({ trader, highlightCategory, onClos
                                             })}
                                         </div>
                                     )}
+
+                                    {/* Loading indicator for infinite scroll */}
+                                    {isFetchingNextHistoryPage && (
+                                        <div className="flex justify-center items-center py-6">
+                                            <Loader2 className="w-5 h-5 text-zinc-500 animate-spin" />
+                                        </div>
+                                    )}
+
+                                    {/* End of list indicator */}
+                                    {!hasNextHistoryPage && historyTrades.length > 0 && (
+                                        <div className="text-center py-6 text-xs text-zinc-600">
+                                            End of list
+                                        </div>
+                                    )}
+                                    </div>
                                 </>
                             )}
                         </div>

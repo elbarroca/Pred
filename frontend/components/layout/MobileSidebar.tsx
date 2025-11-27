@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Menu, X, Crown, LayoutGrid, WalletMinimal, MessageSquareText, Settings2, LogOut } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,14 @@ import { Button } from '@/components/ui/button';
 export default function MobileSidebar() {
     const [isOpen, setIsOpen] = useState(false);
     const pathname = usePathname();
+    const router = useRouter();
+
+    // Mock History Data (In a real app, this comes from Supabase)
+    const recentChats = [
+        { id: 1, title: "Wallet Analysis: 0x83...9a", date: "2h ago" },
+        { id: 2, title: "Top Traders Q3", date: "1d ago" },
+        { id: 3, title: "US Election Volatility", date: "3d ago" },
+    ];
 
     const navItems = [
         { name: 'AI Chat', icon: MessageSquareText, href: '/dashboard' },
@@ -19,6 +27,11 @@ export default function MobileSidebar() {
         { name: 'Market Scanner', icon: LayoutGrid, href: '/dashboard/scanner' },
         { name: 'Wallet Tracker', icon: WalletMinimal, href: '/dashboard/wallets' },
     ];
+
+    const handleSignOut = () => {
+        router.push('/');
+        setIsOpen(false);
+    };
 
     return (
         <>
@@ -63,19 +76,40 @@ export default function MobileSidebar() {
                             </div>
 
                             <div className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
-                                {navItems.map((item) => (
-                                    <Link key={item.href} href={item.href} onClick={() => setIsOpen(false)}>
-                                        <div className={cn(
-                                            "flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition-all",
-                                            pathname === item.href
-                                                ? "bg-zinc-900 text-white font-medium border border-white/5 shadow-sm"
-                                                : "text-zinc-400 hover:bg-zinc-900/50 hover:text-zinc-200"
-                                        )}>
-                                            <item.icon className="w-5 h-5" />
-                                            {item.name}
-                                        </div>
-                                    </Link>
-                                ))}
+                                {/* Main Navigation */}
+                                <div className="space-y-1 mb-6">
+                                    <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider px-3 mb-2">Menu</div>
+                                    {navItems.map((item) => (
+                                        <Link key={item.href} href={item.href} onClick={() => setIsOpen(false)}>
+                                            <div className={cn(
+                                                "flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition-all",
+                                                pathname === item.href
+                                                    ? "bg-zinc-900 text-white font-medium border border-white/5 shadow-sm"
+                                                    : "text-zinc-400 hover:bg-zinc-900/50 hover:text-zinc-200"
+                                            )}>
+                                                <item.icon className="w-5 h-5" />
+                                                {item.name}
+                                            </div>
+                                        </Link>
+                                    ))}
+                                </div>
+
+                                {/* Recent History Section */}
+                                <div className="space-y-1">
+                                    <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider px-3 mb-2">Recent Sessions</div>
+                                    <div className="space-y-0.5">
+                                        {recentChats.map((chat) => (
+                                            <button
+                                                key={chat.id}
+                                                className="flex w-full flex-col items-start px-3 py-2 rounded-lg text-zinc-400 hover:bg-zinc-900/50 hover:text-zinc-200 transition-all group"
+                                                onClick={() => setIsOpen(false)}
+                                            >
+                                                <span className="text-sm truncate w-full text-left">{chat.title}</span>
+                                                <span className="text-[10px] text-zinc-600 group-hover:text-zinc-500">{chat.date}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
                             </div>
 
                             <div className="p-4 border-t border-white/10 bg-[#050505]">
@@ -85,7 +119,10 @@ export default function MobileSidebar() {
                                             <Settings2 className="w-4 h-4" /> Settings
                                         </button>
                                     </Link>
-                                    <button className="flex items-center justify-center gap-2 p-2.5 rounded-lg bg-red-500/10 text-red-400 text-xs border border-red-500/20 px-3">
+                                    <button
+                                        onClick={handleSignOut}
+                                        className="flex items-center justify-center gap-2 p-2.5 rounded-lg bg-red-500/10 text-red-400 text-xs border border-red-500/20 px-3 hover:bg-red-500/20 transition-colors"
+                                    >
                                         <LogOut className="w-4 h-4" />
                                     </button>
                                 </div>

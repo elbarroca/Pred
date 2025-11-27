@@ -94,7 +94,7 @@ export async function fetchEliteTraders(page = 1, categories: string[] = []) {
   }
 
   // Merge the data with wallet metadata and open positions
-  const tradersWithDetails = data.map((trader: any) => ({
+  const tradersWithDetails = data.map((trader: EliteTrader) => ({
     ...trader,
     pseudonym: metadataMap.get(trader.proxy_wallet)?.pseudonym || null,
     name: metadataMap.get(trader.proxy_wallet)?.name || null,
@@ -109,15 +109,24 @@ export async function fetchEliteTraders(page = 1, categories: string[] = []) {
 }
 
 // 3. Fetch Active Positions
-export async function fetchElitePositions(walletId: string) {
-  const { data, error } = await supabase
+export async function fetchElitePositions(walletId: string, page = 1, limit = 20) {
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  const { data, count, error } = await supabase
     .from('elite_open_positions')
-    .select('*')
+    .select('*', { count: 'exact' })
     .eq('proxy_wallet', walletId)
-    .order('unrealized_pnl', { ascending: false });
+    .order('unrealized_pnl', { ascending: false })
+    .range(from, to);
 
   if (error) throw error;
-  return data as EliteOpenPosition[];
+
+  return {
+    data: data as EliteOpenPosition[],
+    total: count || 0,
+    totalPages: Math.ceil((count || 0) / limit)
+  };
 }
 
 // 4. Fetch All Unique Event Categories
