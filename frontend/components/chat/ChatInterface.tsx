@@ -69,7 +69,7 @@ export default function ChatInterface() {
                   {msg.role === 'user' ? (
                     <User className="w-3.5 h-3.5 md:w-4 md:h-4 text-zinc-400" />
                   ) : (
-                    <Image src="/favicon.svg" alt="AI" width={16} height={16} className="opacity-90 invert md:w-[20px] md:h-[20px]" />
+                    <Image src="/icon.svg" alt="AI" width={18} height={18} className="opacity-90 object-contain mx-auto my-auto md:w-[22px] md:h-[22px]" />
                   )}
                 </div>
 
@@ -106,7 +106,7 @@ export default function ChatInterface() {
           {isTyping && (
             <div className="flex gap-2 md:gap-5 px-2 md:px-4 py-1 animate-in fade-in duration-300">
               <div className="w-7 h-7 md:w-9 md:h-9 rounded-xl bg-zinc-900 border border-white/5 flex items-center justify-center flex-shrink-0">
-                <Image src="/favicon.svg" alt="AI" width={16} height={16} className="opacity-40 grayscale md:w-[20px] md:h-[20px]" />
+                <Image src="/icon.svg" alt="AI" width={18} height={18} className="opacity-40 grayscale object-contain mx-auto my-auto md:w-[22px] md:h-[22px]" />
               </div>
               <div className="flex flex-col gap-1.5 md:gap-2 pt-0.5 md:pt-1">
                 <div className="flex items-center gap-1.5 md:gap-2 text-[10px] md:text-xs text-blue-400 font-medium uppercase tracking-wider animate-pulse">

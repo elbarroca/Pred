@@ -1,0 +1,26 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="PolyTier Logo">
+  <defs>
+    <linearGradient id="logoTopGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="logoMidGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#2563eb" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="logoBotGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e40af" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#1e3a8a" stop-opacity="0.9"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Perfectly centered icon - spans from y=12 to y=52 (40 units tall, centered at y=32 in 64-unit viewBox) -->
+  <!-- Top chevron - light cyan -->
+  <path d="M8 12 L8 20 L48 36 L48 28 L8 12 Z" fill="url(#logoTopGrad)" stroke="rgba(255,255,255,0.25)" stroke-width="0.5" stroke-linejoin="round" stroke-linecap="round"/>
+  
+  <!-- Middle chevron - medium blue, main body -->
+  <path d="M10 20 L10 28 L56 44 L56 36 L10 20 Z" fill="url(#logoMidGrad)" stroke="rgba(255,255,255,0.25)" stroke-width="0.5" stroke-linejoin="round" stroke-linecap="round"/>
+  
+  <!-- Bottom chevron - dark navy -->
+  <path d="M8 28 L8 36 L48 52 L48 44 L8 28 Z" fill="url(#logoBotGrad)" stroke="rgba(255,255,255,0.25)" stroke-width="0.5" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

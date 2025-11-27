@@ -48,7 +48,7 @@ export default function ChatPage() {
       {/* Inline Header for Status and Controls */}
       <header className="w-full flex items-center justify-between px-4 py-3 border-b border-white/5 bg-[#050505]/80 backdrop-blur-sm flex-shrink-0">
         <div className="md:hidden flex items-center gap-2 font-bold text-zinc-200 text-sm">
-          <Image src="/logo.png" alt="PolyTier" width={20} height={20} className="object-contain" /> PolyTier
+          {/* Logo removed on mobile for ChatPage */}
         </div>
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -173,7 +173,7 @@ function EmptyState({ onSuggestionClick, status }: { onSuggestionClick: (text: s
       <div className="mb-8 relative group">
         <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full group-hover:bg-blue-500/30 transition-all" />
         <div className="w-20 h-20 bg-[#0a0a0a] rounded-2xl border border-zinc-800 flex items-center justify-center relative z-10 shadow-2xl overflow-hidden">
-          <Image src="/icon.png" alt="PolyTier" width={64} height={64} className="object-cover" />
+          <Image src="/icon.svg" alt="PolyTier" width={64} height={64} className="object-contain" />
         </div>
       </div>
 

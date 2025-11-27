@@ -99,17 +99,17 @@ export default function InteractiveTerminal() {
             className={`absolute inset-0 flex flex-col items-center justify-center transition-all duration-500 px-4 ${step === 0 ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none -z-10'}`}
         >
              <div onClick={() => setStep(1)} className="relative group/input cursor-pointer w-full max-w-md mx-auto">
-                <div className="absolute left-3 md:left-4 top-3 md:top-3.5 text-zinc-500 group-hover/input:text-emerald-400 transition-colors">
+                <div className="absolute left-3 md:left-4 top-3 md:top-3.5 text-zinc-500 group-hover/input:text-emerald-400 transition-colors z-10">
                     <Search className="w-4 h-4" />
                 </div>
                 <input
                     readOnly
-                    className="w-full bg-[#0f0f0f] border border-white/10 rounded-xl py-3 pl-9 md:pl-10 pr-4 text-zinc-300 shadow-2xl text-sm group-hover/input:border-white/20 transition-all"
+                    className="w-full bg-[#0f0f0f] border border-white/10 rounded-xl py-3 pl-9 md:pl-10 pr-4 text-zinc-300 shadow-2xl text-sm transition-all group-hover/input:border-emerald-500/50 group-hover/input:bg-[#0a0a0a] group-hover/input:shadow-[0_0_20px_rgba(16,185,129,0.15)] group-hover/input:ring-1 group-hover/input:ring-emerald-500/20"
                     placeholder="Find whales, markets, or signals..."
                 />
                 <div className="mt-3 md:mt-4 flex flex-wrap justify-center gap-2">
                     {['High PnL', 'Active Now', 'Accumulating'].map(tag => (
-                        <span key={tag} className="text-[10px] px-2 py-1 rounded border border-white/5 bg-white/5 text-zinc-600 group-hover/input:text-zinc-500 transition-colors">{tag}</span>
+                        <span key={tag} className="text-[10px] px-2 py-1 rounded border border-white/5 bg-white/5 text-zinc-600 group-hover/input:text-emerald-400 group-hover/input:border-emerald-500/30 group-hover/input:bg-emerald-500/10 transition-all">{tag}</span>
                     ))}
                 </div>
             </div>

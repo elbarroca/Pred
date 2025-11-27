@@ -6,10 +6,10 @@ import {
   WalletMinimal,
   Settings2,
   LogOut,
-  Command,
   Crown
 } from 'lucide-react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
@@ -40,11 +40,11 @@ export function AppSidebar() {
       {/* 1. Logo Area */}
       <div className="h-14 flex items-center px-4 border-b border-white/[0.08]">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-cyan-500 rounded-lg flex items-center justify-center shadow-lg shadow-blue-900/20">
-            <Command className="w-4 h-4 text-white" />
+          <div className="w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden">
+            <Image src="/icon.svg" alt="PolyTier" width={40} height={40} className="object-contain" />
           </div>
-          <span className="font-bold text-zinc-100 tracking-tight text-sm">
-            POLY<span className="text-zinc-500">ANALYTICS</span>
+          <span className="font-bold tracking-tight text-sm">
+            <span className="text-white">POLY</span><span className="text-white">ANALYTICS</span>
           </span>
         </div>
       </div>

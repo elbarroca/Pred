@@ -33,9 +33,9 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-4 md:px-6 h-14 md:h-16 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 md:w-8 md:h-8 rounded-lg flex items-center justify-center overflow-hidden">
-            <Image src="/logo.png" alt="PolyTier" width={32} height={32} className="object-contain" />
+            <Image src="/icon.svg" alt="PolyTier" width={32} height={32} className="object-contain" />
           </div>
-          <span className="font-bold tracking-tight text-base md:text-lg bg-clip-text text-transparent bg-gradient-to-r from-white to-zinc-500">
+          <span className="font-bold tracking-tight text-base md:text-lg text-white">
             PolyTier
           </span>
         </div>

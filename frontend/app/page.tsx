@@ -220,8 +220,11 @@ export default function LandingPage() {
             <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between gap-12">
                <div className="space-y-4">
                   <div className="flex items-center gap-2">
-                     <div className="w-6 h-6 rounded flex items-center justify-center overflow-hidden"><Image src="/logo.png" alt="PolyTier" width={24} height={24} className="object-contain" /></div>
-                     <span className="font-bold text-white">PolyTier</span>
+                     <div className="w-6 h-6 rounded flex items-center justify-center overflow-hidden"><Image src="/logo.svg" alt="PolyTier" width={24} height={24} className="object-contain" /></div>
+                     <span className="font-bold">
+                       <span className="bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 via-blue-500 to-blue-600">Poly</span>
+                       <span className="text-white">Tier</span>
+                     </span>
                   </div>
                   <p className="text-zinc-500 text-sm">The intelligence layer for prediction markets.</p>
                </div>

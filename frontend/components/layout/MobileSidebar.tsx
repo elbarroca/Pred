@@ -26,9 +26,12 @@ export default function MobileSidebar() {
             <div className="md:hidden fixed top-0 left-0 w-full h-14 bg-[#050505]/90 backdrop-blur border-b border-white/10 z-50 flex items-center justify-between px-4">
                 <div className="flex items-center gap-2">
                     <div className="w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden">
-                        <Image src="/logo.png" alt="PolyTier" width={28} height={28} className="object-contain" />
+                        <Image src="/icon.svg" alt="PolyTier" width={28} height={28} className="object-contain" />
                     </div>
-                    <span className="font-bold text-zinc-100 text-sm tracking-tight">PolyTier</span>
+                    <span className="font-bold text-sm tracking-tight">
+                      <span className="text-white">Poly</span>
+                      <span className="text-white">Tier</span>
+                    </span>
                 </div>
                 <Button variant="ghost" size="icon" onClick={() => setIsOpen(true)} className="text-zinc-300 hover:bg-white/10">
                     <Menu className="w-5 h-5" />

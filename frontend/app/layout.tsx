@@ -32,13 +32,10 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: '/favicon-16.png', sizes: '16x16', type: 'image/png' },
-      { url: '/favicon-32.png', sizes: '32x32', type: 'image/png' },
-      { url: '/favicon-48.png', sizes: '48x48', type: 'image/png' },
-      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/icon.svg', sizes: 'any', type: 'image/svg+xml' },
     ],
     apple: [
-      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon.svg', sizes: '180x180', type: 'image/svg+xml' },
     ],
   },
   manifest: '/manifest.json',
@@ -61,7 +58,7 @@ export default function RootLayout({
     <html lang="en">
       <head>
         <link rel="dns-prefetch" href="//polymarket.com" />
-        <link rel="apple-touch-icon" href="/icon-192.png" />
+        <link rel="apple-touch-icon" href="/icon.svg" />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
