@@ -114,7 +114,7 @@ export default function EliteWalletsPage() {
   );
 
   return (
-    <div className="flex flex-col h-full bg-[#050505] overflow-hidden">
+    <div className="flex flex-col min-h-full bg-[#050505]">
 
       {/* Page Header */}
       <div className="px-6 md:px-8 pt-8 pb-6 border-b border-white/5">
@@ -156,7 +156,7 @@ export default function EliteWalletsPage() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 md:px-8 py-8">
+      <div className="px-6 md:px-8 py-8">
 
         {/* --- TAB 1: SECTOR ANALYSIS --- */}
         {activeTab === 'sectors' && (
@@ -308,10 +308,10 @@ export default function EliteWalletsPage() {
 
         {/* --- TAB 2: TRADER LEADERBOARD --- */}
         {activeTab === 'traders' && (
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="h-full flex flex-col">
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col">
 
             {/* Compact Category Filter Section */}
-            <div className="mb-4">
+            <div className="mb-4 z-30 bg-[#050505] border-b border-white/10 py-2 -mx-6 px-6 md:mx-0 md:px-0 md:bg-transparent md:py-0 md:border-none">
               {/* Selected Filters Bar - Always Visible */}
               <div className="flex items-center gap-2 mb-2 flex-wrap">
                 <div className="flex items-center gap-2 text-xs text-zinc-400">
@@ -509,7 +509,7 @@ export default function EliteWalletsPage() {
             </div>
 
             {/* Mobile Card View for Traders */}
-            <div className="md:hidden space-y-3 flex-1 overflow-y-auto">
+            <div className="md:hidden space-y-3 flex-1">
               {traders.map((trader) => (
                 <div
                   key={trader.proxy_wallet}
@@ -524,22 +524,22 @@ export default function EliteWalletsPage() {
                   <div className="flex justify-between items-start mb-3 relative z-10">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       {getWalletAvatar(trader) ? (
-                          <img
-                            src={getWalletAvatar(trader)!}
-                            alt={getWalletDisplayName(trader)}
-                            className="w-10 h-10 rounded-lg object-cover bg-zinc-800 border border-white/10 flex-shrink-0"
-                          />
-                        ) : (
-                          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-zinc-800 to-zinc-900 border border-white/10 flex items-center justify-center flex-shrink-0">
-                            <User className="w-5 h-5 text-zinc-500" />
-                          </div>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="font-medium text-sm text-white truncate">{getWalletDisplayName(trader)}</div>
-                          <div className="text-xs text-zinc-500">
-                            {trader.n_positions || 0} {(trader.n_positions || 0) === 1 ? 'Position' : 'Positions'}
-                          </div>
+                        <img
+                          src={getWalletAvatar(trader)!}
+                          alt={getWalletDisplayName(trader)}
+                          className="w-10 h-10 rounded-lg object-cover bg-zinc-800 border border-white/10 flex-shrink-0"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-zinc-800 to-zinc-900 border border-white/10 flex items-center justify-center flex-shrink-0">
+                          <User className="w-5 h-5 text-zinc-500" />
                         </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-sm text-white truncate">{getWalletDisplayName(trader)}</div>
+                        <div className="text-xs text-zinc-500">
+                          {trader.n_positions || 0} {(trader.n_positions || 0) === 1 ? 'Position' : 'Positions'}
+                        </div>
+                      </div>
                     </div>
 
                     <div className="flex flex-col items-end gap-2 shrink-0">

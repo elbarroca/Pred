@@ -115,10 +115,10 @@ export default function ElitePerformanceChart({ data, onSectorClick }: ChartProp
                 type="category"
                 dataKey="tag"
                 stroke="#71717a"
-                fontSize={10}
+                fontSize={11}
                 tickLine={false}
                 axisLine={false}
-                width={80}
+                width={110}
               />
               <Tooltip content={<CustomTooltip />} cursor={false} />
               <Bar
