@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { motion } from 'framer-motion';
-import { ArrowRight, Twitter, Github, Disc as Discord, Zap, Waves, Target, Activity, BarChart3, User } from 'lucide-react';
+import { ArrowRight, Twitter, Zap, Waves, Target, Activity, BarChart3, User, Linkedin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import InteractiveTerminal from '@/components/landing/InteractiveTerminal';
 import LiveAlphaSection from '@/components/landing/LiveAlphaSection';
@@ -52,15 +52,12 @@ export default function LandingPage() {
                      >
                         <Button
                            size="lg"
-                           className="group relative h-14 px-10 text-lg rounded-full bg-gradient-to-r from-white via-blue-50 to-cyan-50 text-black hover:from-blue-50 hover:via-cyan-50 hover:to-blue-100 border-0 font-semibold shadow-[0_0_40px_-10px_rgba(255,255,255,0.4)] hover:shadow-[0_0_60px_-15px_rgba(59,130,246,0.5)] transition-all duration-500 overflow-hidden"
+                           className="group relative h-14 px-8 md:px-10 text-base md:text-lg rounded-full bg-white text-black hover:bg-blue-50 border-0 font-semibold shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
                         >
-                           <span className="relative z-10 flex items-center gap-2">
-                              <span className="bg-gradient-to-r from-blue-600 to-cyan-600 bg-clip-text text-transparent font-bold">
-                                 Start Analyzing
-                              </span>
-                              <ArrowRight className="w-5 h-5 text-blue-600 group-hover:translate-x-1 transition-transform duration-300" />
+                           <span className="flex items-center gap-2">
+                              Start Analyzing
+                              <ArrowRight className="w-4 h-4 md:w-5 md:h-5 text-blue-600 group-hover:translate-x-1 transition-transform duration-300" />
                            </span>
-                           <div className="absolute inset-0 bg-gradient-to-r from-blue-400/20 via-cyan-400/20 to-blue-400/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-full" />
                         </Button>
                      </motion.div>
                   </Link>
@@ -260,8 +257,7 @@ export default function LandingPage() {
                </div>
                <div className="flex gap-6 text-zinc-500">
                   <Twitter className="w-5 h-5 hover:text-white cursor-pointer" />
-                  <Discord className="w-5 h-5 hover:text-white cursor-pointer" />
-                  <Github className="w-5 h-5 hover:text-white cursor-pointer" />
+                  <Linkedin className="w-5 h-5 hover:text-white cursor-pointer" />
                </div>
             </div>
          </footer>

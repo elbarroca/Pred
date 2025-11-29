@@ -46,7 +46,7 @@ export default function LiveAlphaSection() {
                 <h2 className="text-3xl md:text-4xl font-bold text-white">Proof of Performance</h2>
             </div>
             <div className="text-right">
-                <div className="text-5xl font-bold text-emerald-400 font-mono tracking-tighter">+34.2%</div>
+                <div className="text-5xl font-bold text-emerald-400 font-mono tracking-tighter">+28.0%</div>
                 <div className="text-zinc-500 text-sm">7-Day Rolling ROI</div>
             </div>
         </div>
@@ -55,48 +55,48 @@ export default function LiveAlphaSection() {
         <div className="bg-[#080808] border border-white/10 rounded-2xl md:rounded-3xl overflow-hidden shadow-2xl">
 
             {/* CHART AREA */}
-            <div className="h-[300px] md:h-[400px] relative w-full border-b border-white/5 bg-[#060606]">
+            <div className="h-[280px] md:h-[400px] relative w-full border-b border-white/5 bg-[#060606] overflow-hidden">
                 {/* Grid Lines (Stock Chart Style) */}
-                <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 p-8">
+                <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-20 p-6 md:p-8">
                     <div className="w-full h-px bg-zinc-800"></div>
                     <div className="w-full h-px bg-zinc-800"></div>
                     <div className="w-full h-px bg-zinc-800"></div>
                     <div className="w-full h-px bg-zinc-800"></div>
                     <div className="w-full h-px bg-zinc-800"></div>
                 </div>
-                <div className="absolute inset-0 flex justify-between pointer-events-none opacity-20 px-8">
+                <div className="absolute inset-0 flex justify-between pointer-events-none opacity-20 px-6 md:px-8">
                     <div className="h-full w-px bg-zinc-800"></div>
                     <div className="h-full w-px bg-zinc-800"></div>
                     <div className="h-full w-px bg-zinc-800"></div>
                     <div className="h-full w-px bg-zinc-800"></div>
                 </div>
-                
-                <svg className="w-full h-full absolute inset-0 pt-8 px-0" preserveAspectRatio="none" viewBox="0 0 600 160">
+
+                <svg className="w-full h-full absolute inset-0 pt-6 md:pt-8 px-6 md:px-8" viewBox="0 0 600 160" preserveAspectRatio="xMidYMid meet">
                     <defs>
                         <linearGradient id="stockGrad" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="0%" stopColor="#10b981" stopOpacity="0.3" />
                             <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
                         </linearGradient>
                     </defs>
-                    
+
                     {/* Fill Area */}
-                    <motion.path 
+                    <motion.path
                         initial={{ opacity: 0 }}
-                        whileInView={{ opacity: 1 }}
-                        transition={{ duration: 1 }}
-                        d={`M ${pathData} V 200 H 0 Z`} 
-                        fill="url(#stockGrad)" 
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 1, delay: 0.5 }}
+                        d={`M ${pathData} V 200 H 0 Z`}
+                        fill="url(#stockGrad)"
                     />
-                    
+
                     {/* The Line (Polyline for sharp, realistic look) */}
-                    <motion.polyline 
+                    <motion.polyline
                         initial={{ pathLength: 0 }}
-                        whileInView={{ pathLength: 1 }}
-                        transition={{ duration: 2, ease: "linear" }}
+                        animate={{ pathLength: 1 }}
+                        transition={{ duration: 2, ease: "linear", delay: 1 }}
                         points={pathData}
-                        fill="none" 
-                        stroke="#10b981" 
-                        strokeWidth="2" 
+                        fill="none"
+                        stroke="#10b981"
+                        strokeWidth="2"
                         strokeLinejoin="round"
                         strokeLinecap="round"
                     />
@@ -110,7 +110,7 @@ export default function LiveAlphaSection() {
                     className="absolute top-[5%] right-0 bg-emerald-600 text-white text-xs px-2 py-1 rounded-l font-mono font-bold shadow-lg flex items-center gap-2"
                 >
                     <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
-                    $142,894
+                    $80,028
                 </motion.div>
             </div>
 

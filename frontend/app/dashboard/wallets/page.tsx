@@ -72,38 +72,38 @@ export default function WalletsPage() {
     <div className="flex flex-col h-full bg-[#050505] relative overflow-hidden">
 
       {/* 1. Top Stats Bar */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-6 md:p-8 pb-0">
-        <div className="bg-zinc-900/30 border border-white/5 rounded-xl p-5 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
-            <TrendingUp className="w-6 h-6 text-emerald-400" />
+      <div className="grid grid-cols-3 gap-2 p-4 md:p-8 pb-0">
+        <div className="bg-zinc-900/30 border border-white/5 rounded-lg p-3 md:p-5 flex items-center gap-2 md:gap-4">
+          <div className="w-8 h-8 md:w-12 md:h-12 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+            <TrendingUp className="w-4 h-4 md:w-6 md:h-6 text-emerald-400" />
           </div>
           <div>
             <div className="text-zinc-500 text-xs uppercase tracking-wider">Total Volume Tracked</div>
-            <div className="text-2xl font-mono font-bold text-white">$124M+</div>
+            <div className="text-lg md:text-2xl font-mono font-bold text-white">$124M+</div>
           </div>
         </div>
-        <div className="bg-zinc-900/30 border border-white/5 rounded-xl p-5 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
-            <Activity className="w-6 h-6 text-blue-400" />
+        <div className="bg-zinc-900/30 border border-white/5 rounded-lg p-3 md:p-5 flex items-center gap-2 md:gap-4">
+          <div className="w-8 h-8 md:w-12 md:h-12 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
+            <Activity className="w-4 h-4 md:w-6 md:h-6 text-blue-400" />
           </div>
           <div>
             <div className="text-zinc-500 text-xs uppercase tracking-wider">Total Wallets</div>
-            <div className="text-2xl font-mono font-bold text-white">{totalCount.toLocaleString()}</div>
+            <div className="text-lg md:text-2xl font-mono font-bold text-white">{totalCount.toLocaleString()}</div>
           </div>
         </div>
-        <div className="bg-zinc-900/30 border border-white/5 rounded-xl p-5 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
-            <Trophy className="w-6 h-6 text-amber-400" />
+        <div className="bg-zinc-900/30 border border-white/5 rounded-lg p-3 md:p-5 flex items-center gap-2 md:gap-4">
+          <div className="w-8 h-8 md:w-12 md:h-12 rounded-full bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+            <Trophy className="w-4 h-4 md:w-6 md:h-6 text-amber-400" />
           </div>
           <div>
             <div className="text-zinc-500 text-xs uppercase tracking-wider">Highest ROI</div>
-            <div className="text-2xl font-mono font-bold text-white">4,200%</div>
+            <div className="text-lg md:text-2xl font-mono font-bold text-white">4,200%</div>
           </div>
         </div>
       </div>
 
       {/* 2. Filter & Controls */}
-      <div className="px-6 md:px-8 py-6 flex flex-col md:flex-row items-center justify-between gap-4">
+      <div className="px-4 md:px-8 py-4 md:py-6 flex flex-col md:flex-row items-center justify-between gap-4">
         <div className="relative w-full md:w-96 group">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 group-hover:text-zinc-300 transition-colors" />
           <Input
@@ -139,7 +139,7 @@ export default function WalletsPage() {
       </div>
 
       {/* 3. Main Table - Desktop */}
-      <div className="flex-1 overflow-y-auto px-6 md:px-8 pb-8">
+      <div className="flex-1 overflow-y-auto px-4 md:px-8 pb-4 md:pb-8">
         <div className="hidden md:block bg-zinc-900/20 border border-white/5 rounded-2xl overflow-x-auto min-h-[400px] flex flex-col">
           <table className="w-full text-left border-collapse">
             <thead className="bg-zinc-900/30 sticky top-0 z-10 backdrop-blur-md">
@@ -242,7 +242,7 @@ export default function WalletsPage() {
         </div>
 
         {/* Mobile Card View */}
-        <div className="md:hidden space-y-3">
+        <div className="md:hidden space-y-2">
           {loading ? (
             <div className="flex items-center justify-center py-20">
               <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
@@ -256,10 +256,10 @@ export default function WalletsPage() {
               <div
                 key={wallet.proxy_wallet}
                 onClick={() => setSelectedWallet(wallet)}
-                className="bg-zinc-900/30 border border-white/5 rounded-xl p-4 active:bg-zinc-900/50 transition-colors"
+                className="bg-zinc-900/30 border border-white/5 rounded-xl p-3 active:bg-zinc-900/50 transition-colors"
               >
                 {/* Header */}
-                <div className="flex justify-between items-start mb-3">
+                <div className="flex justify-between items-start mb-2">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     {getWalletAvatar(wallet) ? (
                       <img
@@ -274,7 +274,7 @@ export default function WalletsPage() {
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-sm text-white truncate">{getWalletDisplayName(wallet)}</div>
-                      <div className="text-xs text-zinc-500 mt-0.5">{wallet.n_positions} Trades</div>
+                      <div className="text-xs text-zinc-500 mt-0.5 text-center">{wallet.n_positions} Trades</div>
                     </div>
                   </div>
                   <span className={cn("px-2 py-1 rounded text-xs font-bold border ml-2 flex-shrink-0",
@@ -287,7 +287,7 @@ export default function WalletsPage() {
                 </div>
 
                 {/* Metrics Grid */}
-                <div className="grid grid-cols-2 gap-3 mb-3">
+                <div className="grid grid-cols-2 gap-3 mb-2">
                   <div>
                     <div className="text-[10px] text-zinc-500 uppercase mb-1">Win Rate</div>
                     <div className="flex items-center gap-2">
@@ -308,7 +308,7 @@ export default function WalletsPage() {
                 </div>
 
                 {/* Financial Info */}
-                <div className="flex justify-between pt-3 border-t border-white/5">
+                <div className="flex justify-between pt-2 border-t border-white/5">
                   <div>
                     <div className="text-[10px] text-zinc-500 uppercase">Volume</div>
                     <div className="text-sm font-mono text-zinc-300">{formatCurrency(wallet.total_volume)}</div>

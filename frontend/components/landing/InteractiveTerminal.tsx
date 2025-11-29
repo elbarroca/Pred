@@ -88,8 +88,22 @@ export default function InteractiveTerminal() {
         "relative w-full max-w-4xl mx-auto aspect-[3/4] sm:aspect-[4/3] md:aspect-[16/9] lg:aspect-[16/10] bg-[#050505] rounded-xl border border-white/10 shadow-2xl shadow-blue-900/20 overflow-hidden flex flex-col font-sans select-none group cursor-default transition-all duration-300",
         !isHovered && !isClicked && "animate-pulse-glow"
       )}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseEnter={() => {
+        setIsHovered(true);
+        // Only advance to step 1 if we haven't selected a wallet yet
+        // Once a wallet is selected, stay at the current step
+        if (!selectedWallet) {
+          setStep(1);
+        }
+      }}
+      onMouseLeave={() => {
+        setIsHovered(false);
+        // Only reset to step 0 if we're at step 1 and no wallet is selected
+        // Once a wallet is selected, don't reset the flow on mouse leave
+        if (step === 1 && !selectedWallet) {
+          setStep(0);
+        }
+      }}
       onClick={() => setIsClicked(true)}
     >
 
@@ -114,7 +128,7 @@ export default function InteractiveTerminal() {
         <motion.div
             className={`absolute inset-0 flex flex-col items-center justify-center transition-all duration-500 px-4 ${step === 0 ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none -z-10'}`}
         >
-             <div onClick={() => { setIsClicked(true); setStep(1); }} className="relative group/input cursor-pointer w-full max-w-md mx-auto">
+             <div className="relative group/input cursor-pointer w-full max-w-md mx-auto">
                 <div className="absolute left-3 md:left-4 top-3 md:top-3.5 text-zinc-500 group-hover/input:text-blue-400 transition-colors z-10">
                     <Search className="w-4 h-4" />
                 </div>
@@ -336,7 +350,7 @@ export default function InteractiveTerminal() {
                                 <div className="flex items-center justify-between border-t border-white/5 pt-1 mt-1">
                                     <span className="text-zinc-400 text-xs">Est. Profit</span>
                                     <span className="text-emerald-400 font-mono text-sm font-bold">
-                                        +${(simAmount * (selectedPos.roi / 100)).toFixed(2)}
+                                        +${((simAmount / selectedPos.entry) * selectedPos.curr - simAmount).toFixed(2)}
                                     </span>
                                 </div>
                              </div>

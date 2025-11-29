@@ -108,9 +108,25 @@ export default function EliteWalletsPage() {
     setPage(1);
   };
 
+  // Create enriched categories with volume data
+  const enrichedCategories = eventCategories.map(category => {
+    const tagData = tags.find(tag => tag.tag.toLowerCase() === category.toLowerCase());
+    const totalVolume = tagData ? (tagData.elite_total_volume + tagData.non_elite_total_volume) : 0;
+    const eventCount = tagData?.number_of_events || 0;
+    const eliteCount = tagData?.elite_trader_count || 0;
+
+    return {
+      name: category,
+      totalVolume,
+      eventCount,
+      eliteCount,
+      tagData
+    };
+  }).sort((a, b) => b.totalVolume - a.totalVolume); // Sort by volume descending
+
   // Filter categories by search term
-  const filteredCategories = eventCategories.filter(cat =>
-    cat.toLowerCase().includes(categorySearch.toLowerCase())
+  const filteredCategories = enrichedCategories.filter(cat =>
+    cat.name.toLowerCase().includes(categorySearch.toLowerCase())
   );
 
   return (
@@ -118,8 +134,8 @@ export default function EliteWalletsPage() {
 
       {/* Page Header */}
       <div className="px-6 md:px-8 pt-8 pb-6 border-b border-white/5">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-          <div>
+        <div className="flex flex-col md:flex-row md:items-center justify-center gap-6">
+          <div className="md:flex-1">
             <h1 className="text-2xl font-bold text-white mb-2 flex items-center gap-2">
               <Crown className="w-6 h-6 text-amber-400 fill-amber-400/20" /> Elite Intelligence
             </h1>
@@ -129,7 +145,7 @@ export default function EliteWalletsPage() {
           </div>
 
           {/* Custom Tab Switcher */}
-          <div className="bg-zinc-900/50 p-1 rounded-xl border border-white/5 flex gap-1">
+          <div className="bg-zinc-900/50 p-1 rounded-xl border border-white/5 flex gap-1 justify-center">
             <button
               onClick={() => setActiveTab('sectors')}
               className={cn(
@@ -373,19 +389,76 @@ export default function EliteWalletsPage() {
                     <div className="max-h-48 overflow-y-auto pr-2">
                       <div className="flex flex-wrap gap-1.5">
                         {filteredCategories.map((category) => {
-                          const isSelected = selectedCategories.includes(category);
+                          const isSelected = selectedCategories.includes(category.name);
+
+                          // Color coding based on category type
+                          const getCategoryColor = () => {
+                            const name = category.name.toLowerCase();
+
+                            // Sports & Entertainment
+                            if (name.includes('sports') || name.includes('nfl') || name.includes('nba') || name.includes('soccer') || name.includes('football') || name.includes('basketball') || name.includes('baseball') || name.includes('hockey') || name.includes('nhl') || name.includes('cfb') || name.includes('games') || name.includes('esports') || name.includes('boxing') || name.includes('dota 2') || name.includes('formula 1') || name.includes('chess') || name.includes('darts')) return 'emerald';
+
+                            // Crypto & Technology
+                            if (name.includes('crypto') || name.includes('bitcoin') || name.includes('ethereum') || name.includes('blockchain') || name.includes('prices') || name.includes('deepseek') || name.includes('openai') || name.includes('google') || name.includes('gemini') || name.includes('sam altman') || name.includes('monad')) return 'blue';
+
+                            // Politics & Government
+                            if (name.includes('politics') || name.includes('election') || name.includes('president') || name.includes('global elections') || name.includes('romania') || name.includes('nyc mayor') || name.includes('israel') || name.includes('middle east') || name.includes('geopolitics') || name.includes('gov shutdown') || name.includes('fed rates') || name.includes('economic policy') || name.includes('foreign policy') || name.includes('military actions') || name.includes('russia') || name.includes('putin') || name.includes('france') || name.includes('jerome powell') || name.includes('crypto policy') || name.includes('governance') || name.includes('defense') || name.includes('russia capture') || name.includes('epstein') || name.includes('druze')) return 'purple';
+
+                            // Culture & Society
+                            if (name.includes('culture') || name.includes('hide from new') || name.includes('daily')) return 'rose';
+
+                            // Business & Finance
+                            if (name.includes('business') || name.includes('stocks') || name.includes('market') || name.includes('apple') || name.includes('awards')) return 'amber';
+
+                            // International & Regional
+                            if (name.includes('boxing') || name.includes('brazil') || name.includes('deepseek') || name.includes('dota') || name.includes('champions league') || name.includes('chess') || name.includes('courts')) return 'cyan';
+
+                            return 'zinc';
+                          };
+
+                          const color = getCategoryColor();
+
                           return (
                             <button
-                              key={category}
-                              onClick={() => toggleCategory(category)}
+                              key={category.name}
+                              onClick={() => toggleCategory(category.name)}
                               className={cn(
-                                "px-2.5 py-1 rounded-md text-xs font-medium transition-all border",
+                                "px-2.5 py-1 rounded-md text-xs font-medium transition-all border flex items-center gap-1.5",
                                 isSelected
-                                  ? "bg-blue-500/20 text-blue-300 border-blue-500/40 shadow-sm shadow-blue-500/10"
-                                  : "bg-zinc-800/50 text-zinc-400 border-white/5 hover:bg-zinc-700 hover:text-zinc-300 hover:border-white/10"
+                                  ? color === 'emerald'
+                                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                    : color === 'blue'
+                                    ? "bg-blue-500/20 text-blue-300 border-blue-500/40"
+                                    : color === 'purple'
+                                    ? "bg-purple-500/20 text-purple-300 border-purple-500/40"
+                                    : color === 'amber'
+                                    ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                                    : color === 'rose'
+                                    ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                                    : color === 'cyan'
+                                    ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40"
+                                    : "bg-zinc-500/20 text-zinc-300 border-zinc-500/40"
+                                  : color === 'emerald'
+                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                                  : color === 'blue'
+                                  ? "bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500/20"
+                                  : color === 'purple'
+                                  ? "bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20"
+                                  : color === 'amber'
+                                  ? "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20"
+                                  : color === 'rose'
+                                  ? "bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/20"
+                                  : color === 'cyan'
+                                  ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/20 hover:bg-cyan-500/20"
+                                  : "bg-zinc-800/50 text-zinc-400 border-white/5 hover:bg-zinc-700 hover:text-zinc-300"
                               )}
                             >
-                              {category}
+                              <span>{category.name}</span>
+                              {category.eliteCount > 0 && (
+                                <span className="text-[10px] opacity-75">
+                                  ({category.eliteCount})
+                                </span>
+                              )}
                             </button>
                           );
                         })}
