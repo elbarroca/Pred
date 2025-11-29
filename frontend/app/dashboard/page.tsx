@@ -168,29 +168,29 @@ function EmptyState({ onSuggestionClick, status }: { onSuggestionClick: (text: s
   ];
 
   return (
-    <div className="flex flex-col items-center justify-center h-full px-4">
-      <div className="mb-8 relative group">
+    <div className="flex flex-col items-center justify-center h-full px-4 py-8">
+      <div className="mb-6 md:mb-8 relative group">
         <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full group-hover:bg-blue-500/30 transition-all" />
-        <div className="w-20 h-20 bg-[#0a0a0a] rounded-2xl border border-zinc-800 flex items-center justify-center relative z-10 shadow-2xl overflow-hidden">
-          <Image src="/icon.svg" alt="PolyTier" width={64} height={64} className="object-contain" />
+        <div className="w-16 h-16 md:w-20 md:h-20 bg-[#0a0a0a] rounded-2xl border border-zinc-800 flex items-center justify-center relative z-10 shadow-2xl overflow-hidden">
+          <Image src="/icon.svg" alt="PolyTier" width={48} height={48} className="md:w-16 md:h-16 object-contain" />
         </div>
       </div>
 
-      <h2 className="text-2xl font-bold text-white mb-2 tracking-tight">How can I help you trade?</h2>
-      <p className="text-zinc-500 mb-10 max-w-md text-center text-sm">
+      <h2 className="text-xl md:text-2xl font-bold text-white mb-3 md:mb-2 tracking-tight text-center">How can I help you trade?</h2>
+      <p className="text-zinc-500 mb-8 md:mb-10 max-w-md text-center text-sm px-2">
         I have direct access to the Polymarket database. I can analyze wallet profitability, market trends, and volume.
       </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-3xl">
+      <div className="grid grid-cols-1 gap-3 w-full max-w-lg md:max-w-3xl md:grid-cols-3 md:gap-4">
         {suggestions.map((s, i) => (
           <button
             key={i}
             onClick={() => onSuggestionClick(s.query)}
             disabled={status !== 'connected'}
-            className="flex flex-col items-center gap-3 p-4 rounded-xl border border-zinc-800 bg-zinc-900/30 hover:bg-zinc-900 hover:border-zinc-700 transition-all group disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex flex-col items-center gap-3 p-4 md:p-6 rounded-xl border border-zinc-800 bg-zinc-900/30 hover:bg-zinc-900 hover:border-zinc-700 transition-all group disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
           >
-            <span className="text-2xl group-hover:scale-110 transition-transform">{s.icon}</span>
-            <span className="text-xs font-medium text-zinc-300 group-hover:text-white">{s.label}</span>
+            <span className="text-2xl md:text-3xl group-hover:scale-110 transition-transform">{s.icon}</span>
+            <span className="text-sm md:text-xs font-medium text-zinc-300 group-hover:text-white text-center">{s.label}</span>
           </button>
         ))}
       </div>

@@ -5,7 +5,7 @@ import { fetchWallets } from '@/lib/api/wallets';
 import { WalletAnalytics } from '@/types/database';
 import WalletDrawer from '@/components/wallets/WalletDrawer';
 import { Input } from '@/components/ui/input';
-import { Search, ArrowUpDown, ChevronLeft, ChevronRight, Loader2, Trophy, TrendingUp, Activity, User } from 'lucide-react';
+import { Search, ArrowUpDown, ChevronLeft, ChevronRight, Loader2, Trophy, TrendingUp, Activity, User, Filter, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getWalletDisplayName, getWalletAvatar } from '@/lib/utils/wallet-display';
 
@@ -26,6 +26,9 @@ export default function WalletsPage() {
 
   // Selection State
   const [selectedWallet, setSelectedWallet] = useState<WalletAnalytics | null>(null);
+
+  // Mobile Controls Toggle State
+  const [showMobileControls, setShowMobileControls] = useState(false);
 
   // Fetch Data Function
   const loadData = useCallback(async () => {
@@ -102,8 +105,31 @@ export default function WalletsPage() {
         </div>
       </div>
 
+      {/* 2. Mobile Controls Toggle */}
+      <div className="md:hidden px-4 py-2">
+        <button
+          onClick={() => setShowMobileControls(!showMobileControls)}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/5 bg-zinc-900/30 hover:bg-zinc-900 transition-colors text-sm text-zinc-300 hover:text-white"
+        >
+          {showMobileControls ? (
+            <>
+              <X className="w-4 h-4" />
+              Hide Filters
+            </>
+          ) : (
+            <>
+              <Filter className="w-4 h-4" />
+              Show Filters
+            </>
+          )}
+        </button>
+      </div>
+
       {/* 2. Filter & Controls */}
-      <div className="px-4 md:px-8 py-4 md:py-6 flex flex-col md:flex-row items-center justify-between gap-4">
+      <div className={cn(
+        "px-4 md:px-8 py-4 md:py-6 flex flex-col md:flex-row items-center justify-between gap-4 transition-all duration-300",
+        showMobileControls ? "max-h-96 opacity-100" : "md:max-h-none md:opacity-100 max-h-0 opacity-0 overflow-hidden md:overflow-visible"
+      )}>
         <div className="relative w-full md:w-96 group">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 group-hover:text-zinc-300 transition-colors" />
           <Input
