@@ -115,7 +115,7 @@ export default function InteractiveTerminal() {
           <div className="w-2 h-2 md:w-2.5 md:h-2.5 rounded-full bg-[#2c2c2c] border border-white/10" />
         </div>
         <div className="flex-1 text-[10px] md:text-xs font-mono text-zinc-600 tracking-tight truncate">
-            poly-analytics-terminal — v2.4.0
+            polytier — v2.4.0
         </div>
         <div className="w-8 md:w-10 flex justify-end">
              {step > 1 && <button onClick={() => setStep(step - 1)} className="text-zinc-500 hover:text-white transition-colors p-1"><ChevronLeft className="w-3 h-3 md:w-4 md:h-4"/></button>}

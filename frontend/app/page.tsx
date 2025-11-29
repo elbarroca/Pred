@@ -17,6 +17,7 @@ export default function LandingPage() {
          <div className="fixed inset-0 z-0 pointer-events-none">
             <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808008_1px,transparent_1px),linear-gradient(to_bottom,#80808008_1px,transparent_1px)] bg-[size:32px_32px]"></div>
             <div className="absolute top-[-10%] left-[20%] w-[500px] h-[500px] bg-blue-600/10 blur-[120px] rounded-full"></div>
+            <div className="absolute top-[30%] left-[50%] transform -translate-x-1/2 w-[600px] h-[400px] bg-cyan-500/8 blur-[150px] rounded-full"></div>
          </div>
 
          <Navbar />
